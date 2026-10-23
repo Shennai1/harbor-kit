@@ -189,6 +189,68 @@ class PreparationTests(unittest.TestCase):
         self.assertNotIn("APT::Sandbox::User=root", updates[1])
         self.assertEqual(stat.S_IMODE(self.host.path(APT_LISTS).stat().st_mode), 0o755)
 
+    def test_debian_13_official_keyring_alias_supported(self):
+        alias = self.host.path("/usr/share/keyrings/debian-archive-keyring.gpg")
+        target = "/usr/share/keyrings/debian-archive-keyring.pgp"
+        alias.rename(self.host.path(target))
+        self.prep.initialize()
+        for link in ("debian-archive-keyring.pgp", target):
+            with self.subTest(link=link):
+                alias.symlink_to(link)
+                try:
+                    self.prep._check_archive_keyring()
+                finally:
+                    alias.unlink()
+        alias.symlink_to("debian-archive-keyring.pgp")
+        self.assertEqual(self.prep.packages(), "packages-prepared-services-blocked")
+        self.assertTrue(alias.is_symlink())
+        self.assertEqual(os.readlink(alias), "debian-archive-keyring.pgp")
+
+    def test_unexpected_archive_keyring_alias_rejected_before_install(self):
+        alias = self.host.path("/usr/share/keyrings/debian-archive-keyring.gpg")
+        alias.rename(alias.with_suffix(".pgp"))
+        self.prep.initialize()
+        for link in ("foreign.pgp", "/tmp/foreign.pgp", "../keyrings/debian-archive-keyring.pgp"):
+            with self.subTest(link=link):
+                alias.symlink_to(link)
+                try:
+                    with self.assertRaises(PreparationError):
+                        self.prep.packages()
+                    self.assert_no_install()
+                    self.assertFalse(self.host.path(POLICY).exists())
+                finally:
+                    alias.unlink()
+
+    def test_archive_keyring_alias_target_still_requires_safe_regular_file(self):
+        alias = self.host.path("/usr/share/keyrings/debian-archive-keyring.gpg")
+        alias.unlink()
+        alias.symlink_to("debian-archive-keyring.pgp")
+        target = alias.with_suffix(".pgp")
+        self.prep.initialize()
+        for kind in ("missing", "symlink", "writable", "hardlink", "directory"):
+            with self.subTest(kind=kind):
+                if kind == "symlink":
+                    target.symlink_to("another.pgp")
+                elif kind in {"writable", "hardlink"}:
+                    target.write_bytes(b"fake keyring")
+                    target.chmod(0o666 if kind == "writable" else 0o644)
+                    if kind == "hardlink":
+                        os.link(target, target.with_name("extra.pgp"))
+                elif kind == "directory":
+                    target.mkdir()
+                try:
+                    with self.assertRaises((PreparationError, OSError)):
+                        self.prep.packages()
+                    self.assert_no_install()
+                    self.assertFalse(self.host.path(POLICY).exists())
+                finally:
+                    if kind == "directory":
+                        target.rmdir()
+                    elif kind != "missing":
+                        target.unlink()
+                    if kind == "hardlink":
+                        target.with_name("extra.pgp").unlink()
+
     def test_restrictive_umask_keeps_apt_directory_traversable_and_state_private(self):
         old_mask = os.umask(0o077)
         try:

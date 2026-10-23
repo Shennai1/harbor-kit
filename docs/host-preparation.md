@@ -36,6 +36,12 @@ HTTPS 软件源访问要求主机已有可用的系统 CA、正确时间和网�
 并不能防御已被篡改的 root 环境或恶意包管理钩子。
 应避免同时运行其他包管理或部署操作，工具自己的锁不能代替全系统变更协调。
 
+Debian 13 的官方归档密钥环可能将 `debian-archive-keyring.gpg` 作为指向同目录
+`debian-archive-keyring.pgp` 的兼容链接。准备引擎接受普通 `.gpg` 文件，或该唯一目标的
+相对/绝对链接；链接本身仍须属于当前管理身份，目标仍须通过普通文件、归属、权限、
+链接数和大小检查，不递归跟随其他链接，也不改变系统密钥环或放松 APT 签名验证。
+旧代码会拒绝这个官方链接；本地回归测试已覆盖修复，具体 VPS 停止原因仍应结合本机状态核对。
+
 **本阶段结束后启动保护仍保留。** 它不仅阻止开机启动，也阻止正常的服务启动请求。
 这是尚未配置本机 HTTPS 站点时的预期状态，不是节点已部署完成。
 后续本机激活模块会核对保护文件身份、完成站点与服务配置检查，再受控解除 Nginx 保护；
@@ -102,6 +108,7 @@ APT/systemd/CF/ACME 和证书验收命令由模拟器响应，不是真实软件
 
 ## 官方依据
 
+- [Debian 13 密钥环构建与兼容链接](https://sources.debian.org/src/debian-archive-keyring/2025.1/Makefile/)
 - [Debian 服务启动策略](https://manpages.debian.org/trixie/init-system-helpers/invoke-rc.d.8.en.html)
 - [systemctl mask 行为](https://manpages.debian.org/trixie/systemd/systemctl.1.en.html)
 - [APT 安装与模拟选项](https://manpages.debian.org/trixie/apt/apt-get.8.en.html)

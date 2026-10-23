@@ -341,6 +341,18 @@ class Preparation:
                 "-o", "Dir::Etc::sourceparts=-",
                 "-o", "Dir::State::lists=" + APT_LISTS]
 
+    def _check_archive_keyring(self):
+        keyring = "/usr/share/keyrings/debian-archive-keyring.gpg"
+        target = "/usr/share/keyrings/debian-archive-keyring.pgp"
+        info = self.files.info(keyring)
+        # Debian 13 ships this exact compatibility alias; do not follow other links.
+        if info is not None and stat.S_ISLNK(info.st_mode):
+            if (info.st_uid != os.geteuid() or info.st_nlink != 1
+                    or self.files.readlink(keyring) not in {Path(target).name, target}):
+                raise PreparationError("Debian 密钥环链接归属或目标异常，停止操作。")
+            keyring = target
+        self.files.read(keyring, limit=1024**2)
+
     def _guards(self):
         record = self._read_record("guards")
         expected = {POLICY, *("/etc/systemd/system/" + u for u in UNITS)}
@@ -373,7 +385,7 @@ class Preparation:
             if self._run(["dpkg", "--audit"]).strip():
                 raise PreparationError("存在未完成的软件包操作。")
             # Separate signed Debian indices avoid selecting packages from third-party sources.
-            self.files.read("/usr/share/keyrings/debian-archive-keyring.gpg", limit=1024**2)
+            self._check_archive_keyring()
             with self.files.directory(STATE + "/home", create=True, private=True):
                 pass
             with self.files.directory(APT_LISTS, create=True):
