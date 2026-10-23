@@ -1,2 +1,176 @@
 # harbor-kit
-Experimental service deployment and maintenance toolkit for Debian.
+
+目标：在新的 Debian VPS 上，使用官方 Snell、ShadowTLS 和受信软件源中的
+Nginx，完成自有域名 HTTPS 环境的部署与 SSH 中文菜单管理。
+
+开发版源码仓库：[Shennai1/harbor-kit](https://github.com/Shennai1/harbor-kit)。内部命令仍为 `snellctl`。
+尚无正式版本或经过整机验收的一键远程安装命令；公开源码不等于正式发布。
+当前代码实现只读环境/依赖预检查、官方固定版本下载校验、中文菜单、配置模板和独立测试目录中的文件写入/恢复。
+新增显式选择的 **`install --experimental` 新机向导，会修改系统，但尚未完成 Debian 自动安装实机验收**。
+默认菜单仍只读；不应在现有正常使用的节点上试装，也不应手动调用内部接口。
+升级、系统安装恢复和卸载入口尚未实现。
+
+手工部署基线已由用户在 Debian 13 / amd64 上验证：Snell 5.0.1 + ShadowTLS 0.2.25
+（协议 v3）+ 本机 Nginx + Certbot DNS-01，IPv4 节点可用性、实际使用、
+模拟续期及关机再开机后的恢复均已通过。自动安装流程尚未进行实机验收。
+
+## 已确定的范围
+
+- 面向新机部署，不迁移第三方脚本创建的旧节点。
+- SSH 中文菜单；节点管理与域名、证书管理分开。
+- 每台部署生成新的节点密钥；运行所必需的凭据保留在受限文件中。
+- 使用实际服务配置作为依据，不另外长期保存一份含密钥的完整配置数据库。
+- Snell、ShadowTLS、Nginx、证书客户端和管理工具分别更新。
+- 证书自动续期；协议大版本升级由用户选择；支持操作检查和失败恢复。
+- 诊断报告按需生成、脱敏，不上传遥测或凭据。
+
+实施顺序和验收要求见 [通用路线图](docs/roadmap.md)，
+组件边界见 [设计约定](docs/design.md)。
+私人历史笔记、运行配置和凭据不属于公开仓库内容。
+
+## 获取源码
+
+可以从仓库下载源码，不需要把 GitHub Token 放到 VPS。当前只建议下载后进行只读检查，
+不要在正常使用的旧节点直接启动实验安装。下载说明及代码校验边界见 [源码交付](docs/source-delivery.md)。
+仓库名称不代表用途保密，公开代码可被任何人查看。项目尚未选择开源许可证；
+不重新分发 Snell/ShadowTLS 二进制，其下载来源和各自许可保持独立。
+
+## 当前可运行的命令
+
+需要 Python 3.11 或以上。在项目目录运行：
+
+```bash
+python3 -m snellctl doctor
+python3 -m snellctl doctor --json
+python3 -m snellctl menu
+python3 -m snellctl install-status --json
+python3 -m snellctl cleanup-plan --json
+python3 -m snellctl plan --domain node.example.net
+python3 -m snellctl plan --domain node.example.net --node second --public-port 24443 --snell-port 32001 --tls-port 32443 --json
+python3 -m snellctl artifacts list
+python3 -m snellctl preflight --domain node.example.net
+python3 -m unittest discover -s tests -v
+```
+
+`doctor` 不需要联网，不请求 sudo，不安装软件、不修改防火墙、不重启服务。
+默认只向终端输出；`--json` 也不会自动保存文件。
+无权限读取某项状态时标记为“未知”，不会据此判断安全。
+
+交互终端中不带子命令也会进入中文菜单。默认包含环境检查、部署计划预览、安装阶段记录、需确认的 Surge 配置显示、清理前只读盘点和退出。
+显式使用 `menu --experimental` 才显示新机安装选项，安装仍需逐步确认。
+不显示尚未实现的轮换或卸载选项。非交互调用须明确指定只读/沙盒等子命令，安装向导拒绝非交互输入。
+
+`plan` 是离线预览，可在开发机器上使用，不检查当前系统、DNS、文件归属或端口占用，
+不生成密钥、不读取 Token，不写入部署配置、不执行系统管理命令。输出包含用户主动输入的域名和拟用路径，
+不是完全脱敏的诊断报告；退出码 0 仅表示输入通过语法校验并完成预览，不表示可以安装。
+三个端口的默认值仅为建议，均可替换；两个后端保持回环监听。
+
+内存模板包含 Snell INI、ShadowTLS JSON、独立 Nginx 站点、两个 systemd unit 和限定证书的续期钩子。
+模板接收已提供的独立密钥，重复渲染不会重新生成密钥；计划预览不输出含密钥模板。
+只有独立的 `client` 操作在用户确认后显示既有节点的客户端秘密。
+候选文件仍含明文秘密，不能把隐藏对象 repr 当成加密；沙盒写入器已加入权限、归属、并发锁和恢复检查，
+不能据此宣称真实系统的安装或恢复已经通过验收。
+
+## 离线写入演练
+
+新增 `sandbox init/prepare/status/recover`，只操作明确初始化的独立测试目录，
+没有真实系统根目录写入开关。重复 prepare 不换密钥；存在同名文件、外部修改或未完成操作时停止。
+恢复可选择继续或取消；已经提交的节点不会被取消命令当成卸载对象。
+详细命令、敏感文件处理、恢复边界和限制见 [候选配置写入与恢复](docs/storage.md)。
+
+本地测试共 357 项通过，包括真实子进程中断恢复、跨进程锁、完整沙盒命令试运行、下载校验失败处理、
+准备/激活/公网启用失败路径、规则增量检查、真实本机 TLS、向导串联、伪终端隐藏输入及受控客户端配置显示。
+这些不代表 Debian 自动安装或实际断电验收已经通过。
+
+## 下载与预检查
+
+`artifacts fetch --output <新的绝对目录>` 从固定官方地址下载已验证版本，核对基线指纹、
+压缩包和 ELF 架构，只保存不可执行的暂存文件，不安装。已实际重新下载两个文件并通过校验。
+指纹来自此前手工测试，不能称为上游签名认证；不自动升级到新的协议大版本。
+
+`preflight` 检查新机冲突和软件包依赖，只模拟 APT 安装，不刷新索引、不修改防火墙。
+目前只接入 Debian 13 / amd64；返回成功也不代表可以开始安装。
+详细用法和剩余条件见 [官方文件暂存与新机预检查](docs/downloads-and-preflight.md)。
+
+## 软件包与证书准备
+
+内部模块已加入：限定 Debian 源的包准备、Nginx/Certbot 启动保护、受限凭据写入、
+DNS 演练与正式签发分离、证书验收及中断后禁止盲目重试。
+已连接显式开启的实验版向导，仍需 Debian 实机验收。
+详见 [软件包与证书准备引擎](docs/host-preparation.md)。
+
+## 本机激活
+
+内部控制器已接入固定版本程序安装、按实际版本生成 Nginx 配置、服务启动和本机 TLS 验收。
+首次 ShadowTLS 入口也仅监听回环，不提前开放公网；配置冲突或未完成意图会停止，不覆盖或重新生成密钥。
+模拟续期要求钩子成功及重载后验收，不能只看命令退出码。
+此阶段不启用自动续期定时器或登记开机启动，尚不能作为完整部署使用。
+详见 [本机激活与续期演练](docs/local-activation.md)。
+
+## 公网启用
+
+内部模块已加入 IPv4 TCP 入口切换、UFW 增量放行、服务开机启动和隔离环境中的正式续期任务。
+核对原有 SSH 及 IPv6 配置；不重置防火墙，不盲删规则。失败保留现场，不自动覆盖或重复请求。
+成功仍需外部客户端验收；已连接实验版向导，目前该阶段只有本地模拟测试。
+详见 [公网启用与自动续期](docs/public-enablement.md)。
+
+## 实验安装向导
+
+`install --experimental` 和 `menu --experimental` 串联上述阶段，限定 Debian 13 / amd64 新机。
+隐藏输入 Token；安装风险、CA 条款、正式签发、续期演练、自动续期、SSH 新连接和公网开放分别确认。
+不接受明文 Token 参数、不自动确认、不修改旧节点，不自动回滚已发生的系统或远端操作。
+`install-status` 只读脱敏阶段记录，不表示当前服务健康。
+详见 [实验版新机向导与故障边界](docs/install-wizard.md)。当前不要在手工测试节点上运行它。
+
+## 客户端配置
+
+本工具完成部署的新节点，可在部署主机运行 `python3 -m snellctl client`，或选择普通菜单的 5。
+输入公网 IPv4 并明确确认后，读取已登记且未改动的磁盘配置，显示一整行 Surge 节点声明。
+不换密钥、不另存配置副本、不读取 CF Token/证书私钥、不执行系统命令或联网。
+显示含明文密钥，不是脱敏诊断，终端或录屏可能保留内容；不要贴回对话。
+导出成功不代表当前服务健康或外网可达。详见 [客户端配置说明](docs/client-export.md)。
+自动安装的验证顺序见 [新机实测清单](docs/new-host-acceptance.md)，该清单目前未执行。
+
+## 清理前盘点
+
+`cleanup-plan` 或菜单 6 只读检查 main 的约定路径、服务、监听和共享目录计数，报告不含秘密。
+没有安装器记录的手工节点不会被自动认领；有历史记录也不代表已核实当前归属。
+不读取秘密配置、不停止服务、不删除文件、不修改 UFW、不卸载软件包。
+这是复用测试机之前的准备，不是卸载器。详见 [只读盘点与清理边界](docs/cleanup-inventory.md)。
+
+## 平台与版本
+
+Nginx 模板可区分新旧 HTTP/2 语法，菜单预览默认使用手工基线的 1.26.3 语法。
+开发时可用 `plan --nginx-version 1.22.1` 预览旧语法；这不是安全版本选择或安装指令。
+真正安装时必须根据目标机实际安装版本选择语法、执行 nginx -t，并检查 Debian 软件包补丁状态。
+
+计划部署平台是 Debian 12/13，x86_64/ARM64。其他系统上只报告平台不受支持，
+不会尝试执行 Linux 管理命令；离线 `plan` 不受此限制。实机验收当前仅覆盖 Debian 13 / amd64 / IPv4 TCP。
+
+`doctor` 退出码：`0` 表示此次检查完成且未出现需注意项，`1` 表示存在需注意或未知项，
+`2` 表示平台不支持。这些返回值都不代表外网连通性或安全审计通过。
+
+## 当前阶段的限制
+
+- 有公开开发源码和实验版新机安装入口，但没有正式发布版、完整维护菜单或一键远程安装命令。
+- 开发测试没有访问实际 VPS、Cloudflare 账户或 ACME 服务；上述实机结果来自用户手工操作和反馈。
+  真正运行实验安装向导会安装系统组件、使用凭据访问 Cloudflare 并联系 ACME。
+- 自动测试覆盖参数校验、模板内容、秘密输出限制、命令分派、菜单及只读检查，不代替目标机的 Nginx/systemd 运行验收。
+- 已实现沙盒文件事务、下载验证、有限新机预检查及准备、激活、公网启用的交互串联；自动部署尚未实机验收。
+  已加入受控客户端配置显示；既有节点更新、系统变更恢复或卸载尚未完成。
+- IPv6、普通 UDP、QUIC Proxy Mode、Debian 12、ARM64 尚未实机验收；错误密钥测试按用户要求跳过。
+- 只读检查命令不刷新 APT 索引，也不判断最新安全补丁；实验安装会刷新/安装，但仍待实机验收。
+
+## 官方依据
+
+- [Snell 官方发行说明](https://kb.nssurge.com/surge-knowledge-base/zh/release-notes/snell)
+- [Surge 的 ShadowTLS 配置说明](https://manual.nssurge.com/policies/tls.html)
+- [ShadowTLS 官方发行版](https://github.com/ihciah/shadow-tls/releases)
+- [Debian 安全更新说明](https://www.debian.org/security/faq)
+- [Nginx 官方软件源](https://nginx.org/en/linux_packages.html)
+- [Nginx HTTP/2 语法](https://nginx.org/en/docs/http/ngx_http_v2_module.html#http2)
+- [Nginx TLS 握手拒绝](https://nginx.org/en/docs/http/ngx_http_ssl_module.html#ssl_reject_handshake)
+- [ShadowTLS 0.2.25 配置字段](https://github.com/ihciah/shadow-tls/blob/v0.2.25/src/main.rs)
+- [systemd 运行凭据与权限](https://manpages.debian.org/trixie/systemd/systemd.exec.5.en.html)
+
+程序版本、协议版本和 Debian 软件包版本应分别识别。上游更新不等于本工具已完成兼容性验证。

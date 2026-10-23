@@ -1,0 +1,26 @@
+.DS_Store
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.venv/
+dist/
+*.egg-info/
+
+# Local credentials, runtime data and diagnostic exports are never release inputs.
+.env
+.env.*
+secrets/
+runtime/
+diagnostics/
+*.key
+*.pem
+*.p12
+*.pfx
+
+# Private working notes are not part of the public source tree.
+/outputs/
+/work/
+/docs/test-vps-deployment.md
+/docs/implementation-plan.md
+/.codex/
+/.agents/

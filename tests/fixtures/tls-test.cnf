@@ -1,0 +1,11 @@
+[req]
+distinguished_name = dn
+x509_extensions = server
+prompt = no
+[dn]
+CN = node.example.net
+[server]
+subjectAltName = DNS:node.example.net
+basicConstraints = critical,CA:TRUE
+keyUsage = critical,digitalSignature,keyEncipherment,keyCertSign
+extendedKeyUsage = serverAuth
