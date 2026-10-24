@@ -102,7 +102,7 @@ def read_deployment(prep):
     The returned spec carries a syntax representative, not the installed Nginx
     version. Mutating callers must resolve that version and check its binding.
     """
-    prep._no_key_rotation()
+    prep._no_pending_change()
     for path in ("/etc/snellctl", "/etc/snellctl/nodes", "/etc/snellctl/nodes/main"):
         with prep.files.directory(path, private=True):
             pass

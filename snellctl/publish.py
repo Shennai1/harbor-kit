@@ -257,9 +257,10 @@ class Publication:
                                    ("无法确认任务已停止，必须人工核查。" if failures else "已停止并禁用定时器，不自动重试。")) from None
         return record
 
-    def _public_health(self, spec, record):
+    def _public_health(self, spec, record, *, renewal_record=None):
         hook = f"/etc/letsencrypt/renewal-hooks/deploy/50-snellctl-{spec.node}-nginx"
-        self._renewal_health(spec, self.prep._read_record("renewal-enable-ready"), timer=True)
+        self._renewal_health(spec, self.prep._read_record("renewal-enable-ready") if renewal_record is None
+                             else renewal_record, timer=True)
         self.local._health(spec, record["node"], public_entry=True, check_guards=False, allowed_deploy_hook=hook)
         rules, hashes, running = self._firewall(record["ssh_port"])
         if (_rules_digest(rules) != record["rules_sha256"] or hashes != record["unchanged_ufw"]
@@ -278,7 +279,7 @@ class Publication:
 
     def _pending(self, spec, ssh_port):
         # Caller holds the preparation lock. A ready record never repairs an intent.
-        self.prep._no_key_rotation()
+        self.prep._no_pending_change()
         for name in ("public-ready", "public-intent", "public-files", "public-firewall-added",
                      "renewal-enable-intent", "renewal-enable-ready"):
             if self.prep._exists(name):
@@ -320,7 +321,7 @@ class Publication:
             raise PreparationError("待开放阶段限制必须明确指定。")
         self._validate_node(spec, ssh_port)
         with self.prep._lock():
-            self.prep._no_key_rotation()
+            self.prep._no_pending_change()
             if self.prep._exists("public-ready") and not require_pending:
                 spec = self.local._version(spec)
                 record = self.prep._read_record("public-ready")
