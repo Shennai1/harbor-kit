@@ -14,7 +14,7 @@ def _port(prompt: str, default: int) -> int:
 
 
 def run_menu(*, experimental=False) -> int:
-    installation_attempted = False
+    changes_attempted = False
     try:
         while True:
             print("\nsnellctl（开发版）\n1. 检查当前机器\n2. 新部署计划预览")
@@ -23,6 +23,7 @@ def run_menu(*, experimental=False) -> int:
             print("4. 查看脱敏安装阶段记录\n5. 显示 Surge 配置（含密钥，需确认）\n6. 清理前只读盘点（不卸载）")
             if experimental:
                 print("7. 中断后检查并继续（仅限待开放阶段，会修改系统）")
+                print("8. 单独更换节点密钥（会中断节点，需更新客户端）")
             print("0. 退出")
             choice = input("选择：").strip()
             if choice == "0":
@@ -42,7 +43,7 @@ def run_menu(*, experimental=False) -> int:
                     print(str(exc))
             elif choice == "3" and experimental:
                 from .installer import run_wizard
-                installation_attempted = True
+                changes_attempted = True
                 run_wizard()
             elif choice == "4":
                 from .installer import installation_status, render_status
@@ -55,11 +56,15 @@ def run_menu(*, experimental=False) -> int:
                 print(cleanup_render(cleanup_collect()))
             elif choice == "7" and experimental:
                 from .installer import run_resume
-                installation_attempted = True
+                changes_attempted = True
                 run_resume()
+            elif choice == "8" and experimental:
+                from .rotation import run_rotation
+                changes_attempted = True
+                run_rotation()
             else:
                 print("请选择菜单中已有的编号。")
     except (EOFError, KeyboardInterrupt):
-        print("\n已退出；安装操作可能已改变系统，请查看阶段记录。" if installation_attempted
+        print("\n已退出；操作可能已改变系统，请查看阶段记录。" if changes_attempted
               else "\n已退出；未执行部署或配置变更。")
         return 130

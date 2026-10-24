@@ -12,7 +12,7 @@ import re
 
 from .activation import BINARIES
 from .deployment import NodeSecrets, NodeSpec, file_targets, render_files
-from .hostprep import Preparation, PreparationError, read_owned_files
+from .hostprep import Preparation, read_owned_files
 from .installer import Terminal
 
 
@@ -93,7 +93,46 @@ def _parse_snapshot(snapshot):
     for item in render_files(spec, keys, public_entry=True):
         if snapshot[item.target.path] != item.content.encode("utf-8"):
             raise ClientError("磁盘配置不符合本工具当前支持的模板。")
-    return ClientData(spec.domain, spec.public_port, keys)
+    return spec, keys
+
+
+def read_deployment(prep):
+    """Read current canonical templates and ownership; caller holds prep._lock().
+
+    The returned spec carries a syntax representative, not the installed Nginx
+    version. Mutating callers must resolve that version and check its binding.
+    """
+    prep._no_key_rotation()
+    for path in ("/etc/snellctl", "/etc/snellctl/nodes", "/etc/snellctl/nodes/main"):
+        with prep.files.directory(path, private=True):
+            pass
+    record = prep._read_record("public-ready")
+    binding = record.get("binding")
+    if not isinstance(binding, str) or not re.fullmatch(r"[a-f0-9]{64}", binding):
+        raise ClientError("公网启用记录无效。")
+    node = record.get("node")
+    if (not isinstance(node, dict) or node.get("binding") != binding
+            or prep._read_record("public-files") != node
+            or prep._read_record("renewal-test-ready") != {"binding": binding}
+            or prep._read_record("renewal-enable-ready").get("binding") != binding):
+        raise ClientError("完成记录不一致。")
+    paths = file_targets(NodeSpec("placeholder.invalid"))
+    expected = {**{path: 0o755 for path in BINARIES}, **{t.path: t.mode for t in paths}}
+    snapshot = read_owned_files(prep.files, expected, node)
+    spec, keys = _parse_snapshot(snapshot)
+    if prep._read_record("certificate-ready") != {"domain_sha256": hashlib.sha256(spec.domain.encode()).hexdigest()}:
+        raise ClientError("证书域名记录不一致。")
+    if prep._read_record("public-firewall-added") != {
+        "port": spec.public_port, "family": 4, "protocol": "tcp", "comment": "snellctl-main",
+    }:
+        raise ClientError("入口记录不一致。")
+    for unit in (spec.snell_service, spec.shadowtls_service, "nginx.service"):
+        for prefix in ("/etc/systemd/system/", "/run/systemd/system/", "/usr/lib/systemd/system/"):
+            if prep.files.info(prefix + unit + ".d") is not None:
+                raise ClientError("发现服务覆盖，停止操作。")
+        if prep.files.info("/run/systemd/system/" + unit) is not None:
+            raise ClientError("发现运行时服务覆盖，停止操作。")
+    return spec, keys, record
 
 
 def read_client(*, root=Path("/")):
@@ -103,37 +142,8 @@ def read_client(*, root=Path("/")):
 
     try:
         with Preparation(root, no_commands) as prep, prep._lock():
-            for path in ("/etc/snellctl", "/etc/snellctl/nodes", "/etc/snellctl/nodes/main"):
-                with prep.files.directory(path, private=True):
-                    pass
-            record = prep._read_record("public-ready")
-            binding = record.get("binding")
-            if not isinstance(binding, str) or not re.fullmatch(r"[a-f0-9]{64}", binding):
-                raise ClientError("公网启用记录无效。")
-            node = record.get("node")
-            if (not isinstance(node, dict) or node.get("binding") != binding
-                    or prep._read_record("public-files") != node
-                    or prep._read_record("renewal-test-ready") != {"binding": binding}
-                    or prep._read_record("renewal-enable-ready").get("binding") != binding):
-                raise ClientError("完成记录不一致。")
-            # Managed paths for main do not depend on the domain or port.
-            paths = file_targets(NodeSpec("placeholder.invalid"))
-            expected = {**{path: 0o755 for path in BINARIES}, **{t.path: t.mode for t in paths}}
-            snapshot = read_owned_files(prep.files, expected, node)
-            data = _parse_snapshot(snapshot)
-            if prep._read_record("certificate-ready") != {"domain_sha256": hashlib.sha256(data.domain.encode()).hexdigest()}:
-                raise ClientError("证书域名记录不一致。")
-            if prep._read_record("public-firewall-added") != {
-                "port": data.public_port, "family": 4, "protocol": "tcp", "comment": "snellctl-main",
-            }:
-                raise ClientError("入口记录不一致。")
-            for unit in ("snellctl-snell-main.service", "snellctl-shadowtls-main.service", "nginx.service"):
-                for prefix in ("/etc/systemd/system/", "/run/systemd/system/", "/usr/lib/systemd/system/"):
-                    if prep.files.info(prefix + unit + ".d") is not None:
-                        raise ClientError("发现服务覆盖，停止导出。")
-                if prep.files.info("/run/systemd/system/" + unit) is not None:
-                    raise ClientError("发现运行时服务覆盖，停止导出。")
-            return data
+            spec, keys, _record = read_deployment(prep)
+            return ClientData(spec.domain, spec.public_port, keys)
     except Exception:
         raise ClientError("未能核对完整部署记录、配置归属或权限；未输出密钥，也未修改任何配置。") from None
 

@@ -278,6 +278,7 @@ class Publication:
 
     def _pending(self, spec, ssh_port):
         # Caller holds the preparation lock. A ready record never repairs an intent.
+        self.prep._no_key_rotation()
         for name in ("public-ready", "public-intent", "public-files", "public-firewall-added",
                      "renewal-enable-intent", "renewal-enable-ready"):
             if self.prep._exists(name):
@@ -319,6 +320,7 @@ class Publication:
             raise PreparationError("待开放阶段限制必须明确指定。")
         self._validate_node(spec, ssh_port)
         with self.prep._lock():
+            self.prep._no_key_rotation()
             if self.prep._exists("public-ready") and not require_pending:
                 spec = self.local._version(spec)
                 record = self.prep._read_record("public-ready")

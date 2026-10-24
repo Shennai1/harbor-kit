@@ -298,7 +298,9 @@ def render_status(report):
         for phase, value in report["phases"].items():
             name = PHASES.get(phase, ("软件启动保护", ""))[0]
             lines.append(name + "：" + labels[value])
-        if report["phases"] == PENDING_PUBLIC_PHASES:
+        if report.get("key_rotation") == "needs-inspection":
+            lines.append("密钥更换：未确认完成；不要重试、删除记录、手动重启入口或导出配置。")
+        elif report["phases"] == PENDING_PUBLIC_PHASES:
             lines.append("记录符合受限接续候选阶段；可使用 resume --experimental 先复查现场，不代表已经允许开放。")
     lines.append("报告不含域名、IP、Token、密钥或原始日志；不会自动恢复、签发或删除任何文件。")
     return "\n".join(lines)

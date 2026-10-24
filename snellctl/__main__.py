@@ -33,11 +33,13 @@ def main(argv: list[str] | None = None) -> int:
     doctor = commands.add_parser("doctor", help="只读检查当前机器，不修改配置")
     doctor.add_argument("--json", action="store_true", help="输出脱敏 JSON，不自动保存文件")
     menu = commands.add_parser("menu", help="SSH 中文交互菜单，默认只读")
-    menu.add_argument("--experimental", action="store_true", help="显示新机安装及受限接续入口，仍需逐步确认")
+    menu.add_argument("--experimental", action="store_true", help="显示安装、接续和密钥更换入口，仍需逐步确认")
     install = commands.add_parser("install", help="实验版新机安装向导，会修改系统；仅限交互终端")
     install.add_argument("--experimental", action="store_true", help="明确开启未实机验收的安装向导")
     resume = commands.add_parser("resume", help="实验版受限接续；只允许本机验收完成且公网尚未开始的阶段")
     resume.add_argument("--experimental", action="store_true", help="明确开启受限接续；现场复查后仍需确认")
+    rotate = commands.add_parser("rotate-key", help="实验版：单独更换 Snell 或 ShadowTLS 密钥；会中断节点")
+    rotate.add_argument("--experimental", action="store_true", help="明确开启密钥更换，仍需交互确认")
     status = commands.add_parser("install-status", help="只读查看脱敏的安装阶段记录，不恢复、不检查服务健康")
     status.add_argument("--json", action="store_true")
     commands.add_parser("client", help="确认后在终端显示 Surge 配置（含密钥）；只读，不写文件")
@@ -75,6 +77,12 @@ def main(argv: list[str] | None = None) -> int:
     if args.command == "client":
         from .client import run_client
         return run_client()
+    if args.command == "rotate-key":
+        if not args.experimental:
+            print("密钥更换仍属实验功能；需要明确提供 --experimental，不会自动执行。", file=sys.stderr)
+            return 2
+        from .rotation import run_rotation
+        return run_rotation()
     if args.command == "install":
         if not args.experimental:
             print("安装尚未完成实机验收；需要明确提供 --experimental，不会自动执行。", file=sys.stderr)
