@@ -168,7 +168,7 @@ def run_rotation(*, factory=real_rotation, terminal=None):
         return 2
     attempted = False
     try:
-        ui.say("实验版密钥更换：仅限本工具完整部署的 main 节点，尚未通过实机轮换验收。")
+        ui.say("实验版密钥更换：仅限本工具完整部署的 main 节点；仍需逐台验收，不提供自动恢复。")
         ui.say("1. 仅更换 Snell PSK\n2. 仅更换 ShadowTLS 密码\n其他输入取消")
         component = {"1": "snell", "2": "shadowtls"}.get(ui.ask("选择：").strip())
         if component is None:
