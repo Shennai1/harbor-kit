@@ -1,7 +1,9 @@
 # 新机自动部署实测清单
 
-这是**待执行清单，不是已经通过的测试报告**。
-此前手工部署成功不能替代自动安装器实测。目前不改动现有节点。
+这是**可复用的验收清单，未勾选项不代表已通过**。
+已有一轮用户实测：实验安装在 SSH 断线后，经人工核查和一次性命令接续，
+客户端使用及正常重启恢复通过。完整向导、新菜单接续、真实到期轮换仍待独立验证。
+此前手工部署成功不能替代这些验收。目前不改动现有正常运行节点。
 当前范围：Debian 13 / amd64、新机、单节点 main、Snell 5.0.1 + ShadowTLS 0.2.25 / v3、IPv4 TCP。
 
 若计划清理既有测试机后复用，先盘点并单独确认卸载范围，再按干净环境复查。
@@ -27,7 +29,7 @@
 复用机器前需区分手工节点和本工具创建的资源，核对节点服务、版本目录、Nginx 站点、证书/续期钩子、
 凭据及入口 UFW 规则的实际引用。不能仅因路径相似就认领或删除，更不能拿其他 VPS 的端口套用。
 保护 SSH、UFW 基础规则、其他站点/证书和业务；不执行通用“清空防火墙”、删除全部证书或内核自动清理命令。
-卸载和恢复功能尚未实现，具体清理方案留待盘点后单独审核，不能把本清单当作卸载脚本。
+卸载和通用恢复功能尚未实现；受限接续不能替代清理或处理未知中断，不能把本清单当作卸载脚本。
 
 现在可先用 `python3 -m snellctl cleanup-plan --json`（普通菜单 6）做
 [清理前只读盘点](cleanup-inventory.md)。前提是代码已交付至目标机；它不停止服务、不删除文件，
@@ -74,14 +76,19 @@ python3 -m snellctl install --experimental
 先查看 `python3 -m snellctl install-status --json` 和终端固定的阶段错误。
 软件包、DNS、CA 操作不支持整体事务回滚；失败可能已产生远端结果或新增规则。
 
+接续入口需在独立授权的测试部署上验证：本机验收和续期演练已通过，
+在公网确认处取消或断开后，确认旧程序退出，再运行 `resume --experimental` 或实验菜单 7。
+核对先只读复查、三项重新确认、不重新签发/换密钥，接续后继续以下验收。
+取消应保留现场，已完成节点及部分公网启用结果应拒绝接续；不要在现用节点上制造故障测试。
+
 ## 服务端复查
 
 ```bash
 python3 -m snellctl install-status --json
 python3 -m snellctl doctor --json
-systemctl show snellctl-snell-main.service snellctl-shadowtls-main.service nginx.service \
+systemctl --no-pager show snellctl-snell-main.service snellctl-shadowtls-main.service nginx.service \
   -p Id,ActiveState,SubState,UnitFileState,NRestarts,ExecMainStatus
-systemctl show ufw.service certbot.timer \
+systemctl --no-pager show ufw.service certbot.timer \
   -p Id,ActiveState,SubState,UnitFileState
 systemctl list-timers --all certbot.timer --no-pager --full
 ```
@@ -150,4 +157,4 @@ Surge 延迟/实际使用、重启恢复、续期演练分别为通过/失败/�
 不必保存完整配置副本或提交整段命令历史。未完成项保留为未测，不自动勾选清单。
 
 即使以上通过，仍不能发布“全功能管理器”：更新、换域名/Token/密钥、恢复、卸载、
-IPv6、其他平台和最终 GitHub 下载入口需要各自实现并验收。
+IPv6、其他平台和最终 GitHub 下载入口需要各自实现并验收。受限接续不代表通用恢复已完成。

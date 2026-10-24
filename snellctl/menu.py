@@ -20,7 +20,10 @@ def run_menu(*, experimental=False) -> int:
             print("\nsnellctl（开发版）\n1. 检查当前机器\n2. 新部署计划预览")
             if experimental:
                 print("3. 实验版新机安装（会修改系统）")
-            print("4. 查看脱敏安装阶段记录\n5. 显示 Surge 配置（含密钥，需确认）\n6. 清理前只读盘点（不卸载）\n0. 退出")
+            print("4. 查看脱敏安装阶段记录\n5. 显示 Surge 配置（含密钥，需确认）\n6. 清理前只读盘点（不卸载）")
+            if experimental:
+                print("7. 中断后检查并继续（仅限待开放阶段，会修改系统）")
+            print("0. 退出")
             choice = input("选择：").strip()
             if choice == "0":
                 return 0
@@ -50,6 +53,10 @@ def run_menu(*, experimental=False) -> int:
             elif choice == "6":
                 from .cleanup import collect as cleanup_collect, render as cleanup_render
                 print(cleanup_render(cleanup_collect()))
+            elif choice == "7" and experimental:
+                from .installer import run_resume
+                installation_attempted = True
+                run_resume()
             else:
                 print("请选择菜单中已有的编号。")
     except (EOFError, KeyboardInterrupt):

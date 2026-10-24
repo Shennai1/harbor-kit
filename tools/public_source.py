@@ -26,7 +26,7 @@ PUBLIC_FILES = (
     "tests/test_cleanup.py", "tests/test_cli.py", "tests/test_client.py",
     "tests/test_deployment.py", "tests/test_doctor.py", "tests/test_hostcommands.py",
     "tests/test_hostprep.py", "tests/test_installer.py", "tests/test_preflight.py",
-    "tests/test_public_source.py", "tests/test_publish.py", "tests/test_storage.py",
+    "tests/test_public_source.py", "tests/test_publish.py", "tests/test_resume.py", "tests/test_storage.py",
     "tests/test_tlsprobe.py", "tools/public_source.py",
 )
 SENSITIVE = (

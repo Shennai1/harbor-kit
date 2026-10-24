@@ -269,32 +269,65 @@ class Publication:
             if self.prep._run(["systemctl", "is-enabled", unit]).strip() != "enabled":
                 raise PreparationError("节点服务开机启动状态不符。")
 
-    def enable(self, spec, *, ssh_port, confirm_public, confirm_renewal, confirm_ssh_reconnected):
-        if not all(value is True for value in (confirm_public, confirm_renewal, confirm_ssh_reconnected)):
-            raise PreparationError("需确认开放 IPv4 TCP、启用正式续期，并确认另一个 SSH 新连接正常。")
+    @staticmethod
+    def _validate_node(spec, ssh_port):
         if type(ssh_port) is not int or not 1 <= ssh_port <= 65535 or ssh_port in {spec.public_port, spec.snell_port, spec.tls_port}:
             raise PreparationError("SSH 端口无效或与节点端口冲突。")
         if spec.node != "main":
             raise PreparationError("首轮仅支持单节点 main。")
+
+    def _pending(self, spec, ssh_port):
+        # Caller holds the preparation lock. A ready record never repairs an intent.
+        for name in ("public-ready", "public-intent", "public-files", "public-firewall-added",
+                     "renewal-enable-intent", "renewal-enable-ready"):
+            if self.prep._exists(name):
+                raise PreparationError("公网或自动续期启用已经开始或完成，不按待开放阶段接续。")
+        records = {name: self.prep._read_record(name) for name in (
+            "guards", "packages-ready", "dns-test-ready", "certificate-ready",
+            "activation-ready", "renewal-test-ready",
+        )}
+        spec = self.local._version(spec)
+        domain = {"domain_sha256": _digest(spec.domain.encode())}
+        local_record = records["activation-ready"]
+        if (records["dns-test-ready"] != domain or records["certificate-ready"] != domain
+                or local_record.get("binding") != _binding(spec)
+                or records["renewal-test-ready"] != {"binding": _binding(spec)}):
+            raise PreparationError("本机部署记录与输入参数不符，不隐式更换域名、端口或密钥。")
+        if self.prep._installed() != records["packages-ready"].get("versions"):
+            raise PreparationError("软件包版本与准备记录不符，先人工核查。")
+        self.local._health(spec, local_record)
+        firewall = self.check_new_host(spec, ssh_port)
+        if self._fields(spec.shadowtls_service, "UnitFileState") != {"UnitFileState": "disabled"}:
+            raise PreparationError("公网切换前入口服务必须尚未登记开机启动。")
+        self._vendor_certbot()
+        self.local._no_overrides(("certbot.service", "certbot.timer"))
+        self.prep._certbot_config()
+        return spec, local_record, firewall
+
+    def check_pending(self, spec, *, ssh_port):
+        """Read-only live check; not a reservation or permission to skip rechecking."""
+        self._validate_node(spec, ssh_port)
         with self.prep._lock():
-            spec = self.local._version(spec)
-            if self.prep._exists("public-ready"):
+            self._pending(spec, ssh_port)
+        return "pending-publication-verified"
+
+    def enable(self, spec, *, ssh_port, confirm_public, confirm_renewal, confirm_ssh_reconnected,
+               require_pending=False):
+        if not all(value is True for value in (confirm_public, confirm_renewal, confirm_ssh_reconnected)):
+            raise PreparationError("需确认开放 IPv4 TCP、启用正式续期，并确认另一个 SSH 新连接正常。")
+        if type(require_pending) is not bool:
+            raise PreparationError("待开放阶段限制必须明确指定。")
+        self._validate_node(spec, ssh_port)
+        with self.prep._lock():
+            if self.prep._exists("public-ready") and not require_pending:
+                spec = self.local._version(spec)
                 record = self.prep._read_record("public-ready")
                 if record.get("binding") != _binding(spec) or record.get("ssh_port") != ssh_port:
                     raise PreparationError("公网启用参数已改变，不隐式更新配置。")
                 self._public_health(spec, record)
                 return "already-public-enabled-external-test-required"
-            if self.prep._exists("public-intent") or self.prep._exists("renewal-enable-intent"):
-                raise PreparationError("存在未完成的公网启用操作，先人工核查，不自动重复。")
-            local_record = self.prep._read_record("activation-ready")
-            if (local_record.get("binding") != _binding(spec)
-                    or self.prep._read_record("renewal-test-ready") != {"binding": _binding(spec)}):
-                raise PreparationError("本机激活或模拟续期尚未通过。")
-            self.local._health(spec, local_record)
-            rules_before, hashes, running_before = self.check_new_host(spec, ssh_port)
+            spec, local_record, (rules_before, hashes, running_before) = self._pending(spec, ssh_port)
             comment = "snellctl-" + spec.node
-            if self._fields(spec.shadowtls_service, "UnitFileState") != {"UnitFileState": "disabled"}:
-                raise PreparationError("公网切换前入口服务必须尚未登记开机启动。")
             self.prep._record("public-intent", {"binding": _binding(spec), "ssh_port": ssh_port,
                                               "rules_before_sha256": _rules_digest(rules_before)})
             entry_attempted = False
