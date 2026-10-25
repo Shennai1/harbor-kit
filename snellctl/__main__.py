@@ -46,6 +46,7 @@ def main(argv: list[str] | None = None) -> int:
     token.add_argument("--experimental", action="store_true", help="明确开启 Token 更换，仍需交互确认")
     diagnosis = commands.add_parser("diagnose-token", help="实验版：仅对未替换的候选 Token 执行一次诊断，不恢复更换")
     diagnosis.add_argument("--experimental", action="store_true", help="明确开启候选诊断，仍需交互确认")
+    diagnosis.add_argument("--after-permission-fix", action="store_true", help="同一令牌的云端权限修正后单次复测；保留原诊断，不提交更换")
     status = commands.add_parser("install-status", help="只读查看脱敏的安装阶段记录，不恢复、不检查服务健康")
     status.add_argument("--json", action="store_true")
     commands.add_parser("client", help="确认后在终端显示 Surge 配置（含密钥）；只读，不写文件")
@@ -106,7 +107,7 @@ def main(argv: list[str] | None = None) -> int:
             print("候选诊断需要明确提供 --experimental，且仍需交互确认。", file=sys.stderr)
             return 2
         from .tokendiag import run_token_diagnostic
-        return run_token_diagnostic()
+        return run_token_diagnostic(after_permission_fix=args.after_permission_fix)
     if args.command == "install":
         if not args.experimental:
             print("安装尚未完成实机验收；需要明确提供 --experimental，不会自动执行。", file=sys.stderr)

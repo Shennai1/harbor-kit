@@ -7,7 +7,8 @@ from unittest.mock import patch
 from snellctl.__main__ import main
 from snellctl.client import ClientError, read_client
 from snellctl.hostprep import CREDENTIAL, STATE, STAGING, PreparationError, Reply
-from snellctl.tokendiag import LOGS, REPORT, STARTED, TokenDiagnostic, run_token_diagnostic
+from snellctl.tokendiag import (LOGS, REPORT, STARTED, RECHECK_LOGS, RECHECK_REPORT,
+                               RECHECK_STARTED, TokenDiagnostic, run_token_diagnostic)
 from snellctl.tokenchange import CANDIDATE, CURRENT, INTENT
 from test_installer import Console
 import test_tokenchange
@@ -319,3 +320,198 @@ class TokenDiagnosticTests(unittest.TestCase):
         report = self.run_probe()
         self.assertFalse(report["postcheck_passed"])
         self.assertEqual(report["failure_phase"], "postcheck")
+
+
+class PermissionRecheckTests(unittest.TestCase):
+    def setUp(self):
+        TokenDiagnosticTests.setUp(self)
+        self.failure = ("dns-01 challenge for " + self.spec.domain + "\n"
+                        "Encountered CloudFlareAPIError adding TXT record: 10000 Authentication error\n")
+        self.host.local_override = lambda c: Reply(1, self.failure) if c.argv[:2] == ("certbot", "renew") else None
+        self.previous = self.diag.run(self.diag.check(), confirm_probe=True)
+        self.assertTrue(self.previous["postcheck_passed"])
+        self.host.local_override = None
+        self.host.calls.clear()
+        self.diag = TokenDiagnostic(self.tokens, after_permission_fix=True)
+
+    run_probe = TokenDiagnosticTests.run_probe
+    certbot_calls = TokenDiagnosticTests.certbot_calls
+    assert_no_management_writes = TokenDiagnosticTests.assert_no_management_writes
+
+    def test_one_recheck_preserves_all_prior_files_and_does_not_commit(self):
+        before = test_tokenchange.TokenChangeTests.snapshot(self)
+        report = self.run_probe()
+        self.assertEqual(report["result"], "candidate-probe-passed-not-committed")
+        self.assertEqual(report["attempt"], "after-permission-fix")
+        self.assertTrue(report["postcheck_passed"])
+        self.assertTrue(report["renewal_paused_verified_after"])
+        self.assertTrue(report["report_saved"])
+        self.assertEqual(self.prep._read_record(RECHECK_REPORT), report)
+        self.assertEqual(self.prep._read_record(REPORT), self.previous)
+        after = test_tokenchange.TokenChangeTests.snapshot(self)
+        for path, value in before.items():
+            self.assertEqual(after[path], value, path)
+        command, = self.certbot_calls()
+        args = command.argv
+        self.assertEqual(args[args.index("--logs-dir") + 1], RECHECK_LOGS)
+        self.assertEqual(args[args.index("--dns-cloudflare-credentials") + 1], CANDIDATE)
+        self.assertIn("--no-random-sleep-on-renew", args)
+        self.assertIn("--dry-run", args)
+        self.assertEqual(command.timeout, 600)
+        self.assertEqual(self.host.path(RECHECK_LOGS).stat().st_mode & 0o777, 0o700)
+        self.assertEqual(self.host.path(RECHECK_LOGS + "/command-output.txt").stat().st_mode & 0o777, 0o600)
+        self.assertEqual(self.host.path(CREDENTIAL).read_bytes(), self.old)
+        self.assertTrue(self.host.path(CANDIDATE).exists())
+        self.assertTrue(self.prep._exists(INTENT))
+        self.assertFalse(self.prep._exists(CURRENT))
+        self.assertNotIn("certbot.timer", self.host.enabled)
+        self.assert_no_management_writes()
+
+    def test_existing_recheck_paths_stop_without_overwriting(self):
+        for path in (STATE + "/" + RECHECK_STARTED + ".json",
+                     STATE + "/" + RECHECK_REPORT + ".json", RECHECK_LOGS):
+            self.host.path(path).symlink_to("/unrelated")
+            with self.assertRaises(Exception):
+                self.diag.check()
+            self.assertTrue(self.host.path(path).is_symlink())
+            self.host.path(path).unlink()
+        self.assertEqual(self.certbot_calls(), [])
+
+    def test_no_third_probe_after_success_or_failure(self):
+        self.host.local_override = lambda c: Reply(1, self.failure) if c.argv[:2] == ("certbot", "renew") else None
+        self.run_probe()
+        with self.assertRaises(PreparationError):
+            self.run_probe()
+        self.assertEqual(len(self.certbot_calls()), 1)
+
+    def test_success_also_blocks_third_probe(self):
+        self.run_probe()
+        with self.assertRaises(PreparationError):
+            self.run_probe()
+        self.assertEqual(len(self.certbot_calls()), 1)
+
+    def test_uncertain_recheck_retains_records_and_blocks_retry(self):
+        self.host.local_override = lambda c: Reply(-1, uncertain=True) if c.argv[:2] == ("certbot", "renew") else None
+        report = self.run_probe()
+        self.assertEqual(report["result"], "execution-uncertain")
+        self.assertTrue(self.prep._exists(RECHECK_STARTED))
+        self.assertEqual(self.prep._read_record(REPORT), self.previous)
+        with self.assertRaises(PreparationError):
+            self.run_probe()
+        self.assertEqual(len(self.certbot_calls()), 1)
+
+    def test_different_error_or_later_phase_is_out_of_scope(self):
+        from snellctl.tokendiag import summarize
+        path = self.host.path(LOGS + "/command-output.txt")
+        report_path = self.host.path(STATE + "/" + REPORT + ".json")
+        cases = [self.failure.replace("10000", "10009"), self.failure.replace("Authentication error", "Internal error"),
+                 self.failure + "Waiting 60 seconds for DNS changes to propagate\n",
+                 self.failure + "Encountered CloudFlareAPIError deleting TXT record: Authentication error\n"]
+        for text in cases:
+            path.write_text(text)
+            report_path.write_text(json.dumps({**self.previous, "certbot": summarize(self.spec, Reply(1, text))}))
+            with self.assertRaises(PreparationError):
+                self.diag.check()
+        self.assertEqual(self.certbot_calls(), [])
+
+    def test_original_entry_still_blocked(self):
+        with self.assertRaises(PreparationError):
+            TokenDiagnostic(self.tokens).check()
+        self.assertEqual(self.certbot_calls(), [])
+
+    def test_missing_prior_report_is_not_bypassed(self):
+        self.host.path(STATE + "/" + REPORT + ".json").unlink()
+        with self.assertRaises(Exception):
+            self.diag.check()
+        self.assertFalse(self.prep._exists(RECHECK_STARTED))
+        self.assertEqual(self.certbot_calls(), [])
+
+    def test_prior_malformed_or_unverified_outcome_rejected(self):
+        cases = [
+            {"result": "execution-uncertain"}, {"result": "candidate-probe-passed-not-committed"},
+            {"postcheck_passed": False}, {"renewal_paused_verified_after": False},
+            {"report_saved": False}, {"certbot_attempted": False}, {"failure_phase": "postcheck"},
+            {"certbot": []}, {"certbot": {**self.previous["certbot"], "exit_code": True}},
+            {"certbot": {**self.previous["certbot"], "execution_uncertain": True}},
+        ]
+        path = self.host.path(STATE + "/" + REPORT + ".json")
+        original = path.read_bytes()
+        for changes in cases:
+            with self.subTest(changes=changes):
+                path.write_text(json.dumps({**self.previous, **changes}))
+                with self.assertRaises(Exception):
+                    self.diag.check()
+                path.write_bytes(original)
+        self.assertEqual(self.certbot_calls(), [])
+
+    def test_old_output_changes_and_symlinks_rejected(self):
+        path = self.host.path(LOGS + "/command-output.txt")
+        original = path.read_bytes()
+        for content in (b"", original.replace(b"10000", b"91090"), original + b"extra"):
+            path.write_bytes(content)
+            with self.assertRaises(PreparationError):
+                self.diag.check()
+        path.write_bytes(original)
+        path.chmod(0o644)
+        with self.assertRaises(Exception):
+            self.diag.check()
+        path.unlink()
+        path.symlink_to(self.host.path(CREDENTIAL))
+        with self.assertRaises(Exception):
+            self.diag.check()
+        self.assertEqual(self.certbot_calls(), [])
+
+    def test_mismatched_previous_binding_rejected(self):
+        self.host.path(STATE + "/" + STARTED + ".json").write_text(
+            json.dumps({"format": 1, "binding": "a" * 64}))
+        with self.assertRaises(PreparationError):
+            self.diag.check()
+        self.assertEqual(self.certbot_calls(), [])
+
+    def test_previous_report_change_after_confirmation_is_rejected(self):
+        plan = self.diag.check()
+        value = {**self.previous, "elapsed_seconds": self.previous["elapsed_seconds"] + 1}
+        self.host.path(STATE + "/" + REPORT + ".json").write_text(json.dumps(value))
+        with self.assertRaises(PreparationError):
+            self.diag.run(plan, confirm_probe=True)
+        self.assertEqual(self.certbot_calls(), [])
+
+    def test_original_output_drift_during_probe_rejected(self):
+        def drift(command):
+            if command.argv[:2] == ("certbot", "renew"):
+                self.host.path(LOGS + "/command-output.txt").write_text("external edit")
+                return Reply(0, success_output())
+        self.host.local_override = drift
+        report = self.run_probe()
+        self.assertFalse(report["postcheck_passed"])
+        self.assertEqual(report["failure_phase"], "postcheck")
+        self.assert_no_management_writes()
+
+    def test_ui_requires_new_confirmation_and_does_not_read_secret(self):
+        @contextmanager
+        def factory():
+            yield self.tokens
+        ui = Console(["n"])
+        self.assertEqual(run_token_diagnostic(factory=factory, terminal=ui, after_permission_fix=True), 130)
+        self.assertEqual(self.certbot_calls(), [])
+        self.assertFalse(self.prep._exists(RECHECK_STARTED))
+        ui = Console(["y"])
+        ui.secret = lambda: self.fail("must not request another token")
+        self.assertEqual(run_token_diagnostic(factory=factory, terminal=ui, after_permission_fix=True), 0)
+        self.assertIn("权限", ui.text)
+        for secret in (TOKEN, NEW_TOKEN, self.before_keys.psk):
+            self.assertNotIn(secret, ui.text)
+
+    def test_cli_dispatch_and_opt_in(self):
+        with patch("snellctl.tokendiag.run_token_diagnostic", return_value=0) as run:
+            self.assertEqual(main(["diagnose-token", "--experimental", "--after-permission-fix"]), 0)
+            run.assert_called_once_with(after_permission_fix=True)
+        with redirect_stderr(io.StringIO()):
+            self.assertEqual(main(["diagnose-token", "--after-permission-fix"]), 2)
+
+    test_candidate_permission_or_content_drift_rejected = TokenDiagnosticTests.test_candidate_permission_or_content_drift_rejected
+    test_old_credential_already_replaced_is_rejected = TokenDiagnosticTests.test_old_credential_already_replaced_is_rejected
+    test_active_timer_rejected_without_stopping_it = TokenDiagnosticTests.test_active_timer_rejected_without_stopping_it
+    test_active_certbot_rejected_without_stopping_it = TokenDiagnosticTests.test_active_certbot_rejected_without_stopping_it
+    test_other_pending_change_rejected = TokenDiagnosticTests.test_other_pending_change_rejected
+    test_pending_guard_still_blocks_ordinary_export_and_management = TokenDiagnosticTests.test_pending_guard_still_blocks_ordinary_export_and_management

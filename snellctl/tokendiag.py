@@ -16,6 +16,9 @@ from .tokenchange import (CANDIDATE, CURRENT, INTENT, UNCHANGED_RECORDS, _json_b
 STARTED = "token-diagnostic-started"
 REPORT = "token-diagnostic-report"
 LOGS = STATE + "/token-diagnostic-logs"
+RECHECK_STARTED = "token-permission-recheck-started"
+RECHECK_REPORT = "token-permission-recheck-report"
+RECHECK_LOGS = STATE + "/token-permission-recheck-logs"
 SIGNALS = {
     "cloudflare_api_error": r"CloudFlareAPIError|Error communicating with the Cloudflare API",
     "zone_lookup_error": r"Error determining zone_id|Unable to determine zone_id",
@@ -54,23 +57,62 @@ class DiagnosticPlan:
 
 
 class TokenDiagnostic:
-    def __init__(self, token_change, progress=lambda phase: None):
+    def __init__(self, token_change, progress=lambda phase: None, *, after_permission_fix=False):
+        if type(after_permission_fix) is not bool:
+            raise PreparationError("复测模式必须明确指定。")
         self.tokens = token_change
         self.prep = token_change.prep
         self.files = token_change.files
         self.progress = progress
         self.phase = "not-started"
+        self.after_permission_fix = after_permission_fix
+        self.started = RECHECK_STARTED if after_permission_fix else STARTED
+        self.report = RECHECK_REPORT if after_permission_fix else REPORT
+        self.logs = RECHECK_LOGS if after_permission_fix else LOGS
 
     def _phase(self, phase):
         self.phase = phase
         self.progress(phase)
 
+    def _previous_failure(self, intent, spec):
+        self._phase("previous-api-failure-check")
+        with self.files.directory(LOGS, private=True):
+            pass
+        paths = (STATE + "/" + STARTED + ".json", STATE + "/" + REPORT + ".json",
+                 LOGS + "/command-output.txt")
+        snapshots = {path: self.tokens._snapshot(path, 0o600) for path in paths}
+        if self.prep._read_record(STARTED) != {"format": 1, "binding": intent["binding"]}:
+            raise PreparationError("原诊断不属于当前更换意图。")
+        report = self.prep._read_record(REPORT)
+        certbot = report.get("certbot", {})
+        if (report.get("format") != 1 or report.get("operation") != "token-candidate-diagnostic"
+                or report.get("result") != "command-failed"
+                or any(report.get(key) is not True for key in (
+                    "certbot_attempted", "postcheck_passed", "renewal_paused_verified_after", "report_saved"))
+                or "failure_phase" in report or not isinstance(certbot, dict)
+                or type(certbot.get("exit_code")) is not int or certbot["exit_code"] != 1
+                or certbot.get("execution_uncertain") is not False):
+            raise PreparationError("只允许对已完成复核的 API 权限失败做一次复测。")
+        text = self.files.read(paths[2], mode=0o600, limit=1024**2).decode("utf-8", "replace")
+        if (len(text) != certbot.get("output_characters")
+                or summarize(spec, Reply(1, text)) != certbot
+                or not re.search(r"Encountered CloudFlareAPIError adding TXT record:\s*10000\s+Authentication error\b", text)
+                or "CloudFlareAPIError deleting TXT record" in text):
+            raise PreparationError("原诊断输出不符合本次权限修正复测范围。")
+        evidence = certbot["evidence"]
+        if (not evidence["fresh_dns_challenge"] or any(evidence[key] for key in (
+                "propagation_wait", "nginx_reload", "simulated_renewal"))):
+            raise PreparationError("原诊断不属于 DNS 传播前的受限失败阶段。")
+        for path, snapshot in snapshots.items():
+            self.tokens._expect(path, snapshot, 0o600)
+        return snapshots
+
     def _check(self):
         self._phase("pending-state-check")
-        for name in ("key-rotation-intent", "port-change-intent", STARTED, REPORT):
+        for name in ("key-rotation-intent", "port-change-intent", self.started, self.report):
             if self.prep._exists(name):
                 raise PreparationError("已有其他变更或本次诊断记录，不重复执行。")
-        for path in (LOGS, CREDENTIAL + ".snellctl-new", STATE + "/" + CURRENT + ".json.snellctl-new"):
+        for path in (self.logs, CREDENTIAL + ".snellctl-new", STATE + "/" + CURRENT + ".json.snellctl-new"):
             if self.files.info(path) is not None:
                 raise PreparationError("发现不应存在的临时文件，保留现场。")
         intent = self.prep._read_record(INTENT)
@@ -102,6 +144,8 @@ class TokenDiagnostic:
         if self.prep._exists(CURRENT):
             path = STATE + "/" + CURRENT + ".json"
             snapshots[path] = self.tokens._snapshot(path, 0o600)
+        if self.after_permission_fix:
+            snapshots.update(self._previous_failure(intent, spec))
         absent = [STATE + "/" + name + ".json" for name in ("key-rotation-intent", "port-change-intent")]
         absent += [CREDENTIAL + ".snellctl-new", STATE + "/" + CURRENT + ".json.snellctl-new"]
         if not self.prep._exists(CURRENT):
@@ -129,11 +173,13 @@ class TokenDiagnostic:
             started = time.monotonic()
             try:
                 self._phase("diagnostic-records")
-                self.prep._record(STARTED, {"format": 1, "binding": record["binding"]})
-                self.files.private_directory_new(LOGS)
+                if self.after_permission_fix:
+                    report["attempt"] = "after-permission-fix"
+                self.prep._record(self.started, {"format": 1, "binding": record["binding"]})
+                self.files.private_directory_new(self.logs)
                 self._phase("candidate-dry-run")
                 args = dry_run_args(spec, CANDIDATE)
-                args[args.index("--logs-dir") + 1] = LOGS
+                args[args.index("--logs-dir") + 1] = self.logs
                 args.append("--no-random-sleep-on-renew")
                 report["certbot_attempted"] = True
                 reply = self.prep.runner(Command(tuple(args), 600, capture_stderr=True))
@@ -141,7 +187,7 @@ class TokenDiagnostic:
                 self._phase("capture-output")
                 # Raw data stays local/root-only; only fixed labels, booleans and
                 # numeric exit/errno values are permitted in the shareable report.
-                self.files.write_new(LOGS + "/command-output.txt", reply.output.encode(), 0o600)
+                self.files.write_new(self.logs + "/command-output.txt", reply.output.encode(), 0o600)
                 self._phase("postcheck")
                 self.tokens._health_paused(spec, record, unchanged)
                 if any(self.files.info(path) is not None for path in unchanged["absent"]):
@@ -161,14 +207,14 @@ class TokenDiagnostic:
                 except (Exception, KeyboardInterrupt):
                     pass
                 try:
-                    self.prep._record(REPORT, {**report, "report_saved": True})
+                    self.prep._record(self.report, {**report, "report_saved": True})
                     report["report_saved"] = True
                 except (Exception, KeyboardInterrupt):
                     pass
             return report
 
 
-def run_token_diagnostic(*, factory=real_token_change, terminal=None):
+def run_token_diagnostic(*, factory=real_token_change, terminal=None, after_permission_fix=False):
     ui = terminal if terminal is not None else Terminal()
     if not ui.interactive():
         ui.say("候选令牌诊断只允许交互终端，不接受自动确认或 Token 参数。")
@@ -176,13 +222,20 @@ def run_token_diagnostic(*, factory=real_token_change, terminal=None):
     diagnostic = None
     try:
         with factory() as engine:
-            diagnostic = TokenDiagnostic(engine, lambda phase: ui.say("诊断阶段：" + phase))
+            diagnostic = TokenDiagnostic(engine, lambda phase: ui.say("诊断阶段：" + phase),
+                                         after_permission_fix=after_permission_fix)
+            if after_permission_fix:
+                ui.say("权限修正后单次复测：只限原候选未替换、原诊断为 TXT 写入认证失败且复核通过的现场。")
+                ui.say("须已在 Cloudflare 将同一令牌修正为目标区域的 DNS 编辑权限；不能是重新生成的令牌。")
+                ui.say("保留第一次诊断记录，使用新的独立日志；通过也不会提交更换或恢复续期。")
             ui.say("只诊断已有的候选令牌，不继续更换；自动续期须处于暂停状态。")
             plan = diagnostic.check()
             ui.say("将单独执行一次 DNS 演练，访问 Cloudflare/测试 CA、增删验证 TXT，并通过既有钩子重载 Nginx。")
             ui.say("不替换正式凭据或证书、不修改 SSH/UFW，不启用续期、不删除候选或更换意图。")
             ui.say("诊断会写入 root-only 记录和独立日志；原始日志可能敏感，只分享最后的 JSON。请勿并行运行 Certbot。")
-            if not confirm(ui, "确认使用已有候选令牌执行单次诊断？"):
+            prompt = ("已修正同一令牌的权限，确认执行一次复测？" if after_permission_fix
+                      else "确认使用已有候选令牌执行单次诊断？")
+            if not confirm(ui, prompt):
                 ui.say("已取消；未执行新的演练。")
                 return 130
             if not ui.interactive():
