@@ -21,13 +21,13 @@ PUBLIC_FILES = (
     "snellctl/deployment.py", "snellctl/doctor.py", "snellctl/hostcommands.py",
     "snellctl/hostprep.py", "snellctl/installer.py", "snellctl/menu.py",
     "snellctl/portchange.py", "snellctl/preflight.py", "snellctl/publish.py", "snellctl/rotation.py", "snellctl/sandbox_cli.py",
-    "snellctl/storage.py", "snellctl/tlsprobe.py", "snellctl/tokenchange.py",
+    "snellctl/storage.py", "snellctl/tlsprobe.py", "snellctl/tokenchange.py", "snellctl/tokendiag.py",
     "tests/fixtures/tls-test.cnf", "tests/test_activation.py", "tests/test_artifacts.py",
     "tests/test_cleanup.py", "tests/test_cli.py", "tests/test_client.py", "tests/test_confirmation.py",
     "tests/test_deployment.py", "tests/test_doctor.py", "tests/test_hostcommands.py",
     "tests/test_hostprep.py", "tests/test_installer.py", "tests/test_preflight.py",
     "tests/test_portchange.py", "tests/test_public_source.py", "tests/test_publish.py", "tests/test_resume.py", "tests/test_rotation.py", "tests/test_storage.py",
-    "tests/test_tlsprobe.py", "tests/test_tokenchange.py", "docs/token-change.md", "tools/public_source.py",
+    "tests/test_tlsprobe.py", "tests/test_tokenchange.py", "tests/test_tokendiag.py", "docs/token-change.md", "tools/public_source.py",
 )
 SENSITIVE = (
     re.compile(r"-----BEGIN (?:RSA |EC |OPENSSH |ENCRYPTED )?PRIVATE KEY-----"),

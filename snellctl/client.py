@@ -103,6 +103,11 @@ def read_deployment(prep):
     version. Mutating callers must resolve that version and check its binding.
     """
     prep._no_pending_change()
+    return _read_deployment_snapshot(prep)
+
+
+def _read_deployment_snapshot(prep):
+    """Ownership/template checks only; caller must separately gate pending changes."""
     for path in ("/etc/snellctl", "/etc/snellctl/nodes", "/etc/snellctl/nodes/main"):
         with prep.files.directory(path, private=True):
             pass

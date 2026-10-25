@@ -27,6 +27,29 @@ def _json_bytes(value):
     return (json.dumps(value, sort_keys=True) + "\n").encode()
 
 
+def dry_run_args(spec, credential):
+    hook = f"/etc/letsencrypt/renewal-hooks/deploy/50-snellctl-{spec.node}-nginx"
+    return [
+        "certbot", "renew", "--non-interactive", "--cert-name", spec.domain,
+        "--dry-run", "--server", STAGING, "--dns-cloudflare-credentials", credential,
+        "--dns-cloudflare-propagation-seconds", "60", "--run-deploy-hooks", "--no-directory-hooks",
+        "--deploy-hook", hook, "--config-dir", "/etc/letsencrypt", "--work-dir", "/var/lib/letsencrypt",
+        "--logs-dir", "/var/log/letsencrypt", "--max-log-backups", "3", "-v",
+    ]
+
+
+def dry_run_evidence(spec, output):
+    lines = {line.strip() for line in output.splitlines()}
+    return {
+        "fresh_dns_challenge": "dns-01 challenge for " + spec.domain in lines,
+        "propagation_wait": "Waiting 60 seconds for DNS changes to propagate" in lines,
+        "nginx_reload": "snellctl: nginx reload command succeeded" in lines,
+        "simulated_renewal": spec.cert_dir + "/fullchain.pem (success)" in lines,
+        "no_cached_authorization_warning": "unable to obtain fresh authorizations" not in output,
+        "no_known_txt_cleanup_error": "CloudFlareAPIError deleting TXT record" not in output,
+    }
+
+
 @dataclass(frozen=True)
 class TokenPlan:
     domain: str = field(repr=False)
@@ -118,22 +141,9 @@ class TokenChange:
             return self._check()[0]
 
     def _dry_run(self, spec, credential):
-        hook = f"/etc/letsencrypt/renewal-hooks/deploy/50-snellctl-{spec.node}-nginx"
-        output = self.prep._run([
-            "certbot", "renew", "--non-interactive", "--cert-name", spec.domain,
-            "--dry-run", "--server", STAGING, "--dns-cloudflare-credentials", credential,
-            "--dns-cloudflare-propagation-seconds", "60", "--run-deploy-hooks", "--no-directory-hooks",
-            "--deploy-hook", hook, "--config-dir", "/etc/letsencrypt", "--work-dir", "/var/lib/letsencrypt",
-            "--logs-dir", "/var/log/letsencrypt", "--max-log-backups", "3", "-v",
-        ], 600, capture_stderr=True)
-        lines = {line.strip() for line in output.splitlines()}
+        output = self.prep._run(dry_run_args(spec, credential), 600, capture_stderr=True)
         # A zero exit status alone can mean skipped validation or failed hooks.
-        required = {"dns-01 challenge for " + spec.domain,
-                    "Waiting 60 seconds for DNS changes to propagate",
-                    "snellctl: nginx reload command succeeded",
-                    spec.cert_dir + "/fullchain.pem (success)"}
-        if (not required <= lines or "unable to obtain fresh authorizations" in output
-                or "CloudFlareAPIError deleting TXT record" in output):
+        if not all(dry_run_evidence(spec, output).values()):
             raise PreparationError("未取得新的 DNS 验证及重载成功证据；不把退出码当作通过。")
 
     def _expect_records(self, unchanged):

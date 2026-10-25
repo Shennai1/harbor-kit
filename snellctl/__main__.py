@@ -44,6 +44,8 @@ def main(argv: list[str] | None = None) -> int:
     port.add_argument("--experimental", action="store_true", help="明确开启端口更换，仍需交互确认")
     token = commands.add_parser("change-token", help="实验版：更换 Cloudflare Token 并验证续期；不改节点密钥")
     token.add_argument("--experimental", action="store_true", help="明确开启 Token 更换，仍需交互确认")
+    diagnosis = commands.add_parser("diagnose-token", help="实验版：仅对未替换的候选 Token 执行一次诊断，不恢复更换")
+    diagnosis.add_argument("--experimental", action="store_true", help="明确开启候选诊断，仍需交互确认")
     status = commands.add_parser("install-status", help="只读查看脱敏的安装阶段记录，不恢复、不检查服务健康")
     status.add_argument("--json", action="store_true")
     commands.add_parser("client", help="确认后在终端显示 Surge 配置（含密钥）；只读，不写文件")
@@ -99,6 +101,12 @@ def main(argv: list[str] | None = None) -> int:
             return 2
         from .tokenchange import run_token_change
         return run_token_change()
+    if args.command == "diagnose-token":
+        if not args.experimental:
+            print("候选诊断需要明确提供 --experimental，且仍需交互确认。", file=sys.stderr)
+            return 2
+        from .tokendiag import run_token_diagnostic
+        return run_token_diagnostic()
     if args.command == "install":
         if not args.experimental:
             print("安装尚未完成实机验收；需要明确提供 --experimental，不会自动执行。", file=sys.stderr)
