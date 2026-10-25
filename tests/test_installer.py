@@ -26,13 +26,14 @@ from test_hostprep import DOMAIN, TOKEN
 from test_publish import PublicHost, UFW_UNCHANGED
 
 
-ANSWERS = [DOMAIN, "", "", "", "54321", "安装", "同意", "签发", "续期演练", "自动续期", "已重连", "开放"]
+ANSWERS = [DOMAIN, "", "", "", "54321", "y", "y", "y", "y", "y", "y", "y"]
 
 
 class Console:
     def __init__(self, answers=None):
         self.answers = iter(ANSWERS if answers is None else answers)
         self.messages = []
+        self.prompts = []
         self.secret = Mock(return_value=TOKEN)
 
     def interactive(self):
@@ -42,6 +43,7 @@ class Console:
         self.messages.append(message)
 
     def ask(self, prompt):
+        self.prompts.append(prompt)
         value = next(self.answers)
         if isinstance(value, BaseException):
             raise value

@@ -295,7 +295,7 @@ class ClientFormatTests(unittest.TestCase):
 
 class Console:
     def __init__(self, answers=None):
-        self.answers = iter([ADDRESS, "显示"] if answers is None else answers)
+        self.answers = iter([ADDRESS, "y"] if answers is None else answers)
         self.messages = []
         self.interactive = Mock(return_value=True)
 
@@ -327,7 +327,7 @@ class ClientDisplayTests(unittest.TestCase):
         self.assertIn("不代表服务健康", "\n".join(self.ui.messages))
 
     def test_enter_or_any_other_answer_cancels_before_reading(self):
-        for answer in ("", "y", "yes", "显示密钥"):
+        for answer in ("", "n", "yes", "显示", "显示密钥"):
             self.ui = Console([ADDRESS, answer])
             self.assertEqual(self.run_display(), 130)
         self.reader.assert_not_called()

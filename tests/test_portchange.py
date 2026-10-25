@@ -481,7 +481,7 @@ class PortWorkflowTests(unittest.TestCase):
         self.plan = PortPlan("node.example.net", 443, 24443, 54321, "d" * 64)
         self.engine.check.return_value = self.plan
         self.engine.change.return_value = "port-changed-external-test-required"
-        self.ui = Console(["24443", "已重连", "更换端口 24443"])
+        self.ui = Console(["24443", "y", "y"])
 
     @contextmanager
     def factory(self):
@@ -495,12 +495,14 @@ class PortWorkflowTests(unittest.TestCase):
         self.engine.check.assert_called_once_with(24443)
         self.engine.change.assert_called_once_with(self.plan, confirm_change=True, confirm_ssh_reconnected=True)
         self.ui.secret.assert_not_called()
+        self.assertIn("从 443 更换为 24443", self.ui.prompts[-1])
+        self.assertIn("[y/n]", self.ui.prompts[-1])
         self.assertIn("公网连接仍待客户端验证", self.ui.text)
 
     def test_cancel_or_eof_any_prompt_never_changes(self):
         for value in ("", EOFError(), KeyboardInterrupt()):
             for index in range(3):
-                answers = ["24443", "已重连", "更换端口 24443"]
+                answers = ["24443", "y", "y"]
                 answers[index] = value
                 self.ui = Console(answers)
                 self.assertEqual(self.run_change(), 130)
@@ -513,8 +515,8 @@ class PortWorkflowTests(unittest.TestCase):
             self.assertNotIn(TOKEN, self.ui.text)
         self.engine.check.assert_not_called()
 
-    def test_wrong_port_confirmation_cancels(self):
-        self.ui = Console(["24443", "已重连", "更换端口 443"])
+    def test_legacy_chinese_confirmation_cancels(self):
+        self.ui = Console(["24443", "y", "更换端口 24443"])
         self.assertEqual(self.run_change(), 130)
         self.engine.change.assert_not_called()
 

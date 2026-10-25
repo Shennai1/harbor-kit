@@ -18,7 +18,7 @@ from test_installer import ANSWERS, Console
 from test_publish import PublicHost, UFW_UNCHANGED
 
 
-RESUME_ANSWERS = [DOMAIN, "443", "31001", "31443", "54321", "自动续期", "已重连", "开放"]
+RESUME_ANSWERS = [DOMAIN, "443", "31001", "31443", "54321", "y", "y", "y"]
 
 
 class ResumeWorkflowTests(unittest.TestCase):
@@ -290,7 +290,7 @@ class ResumeIntegrationTests(unittest.TestCase):
         ui = Console(RESUME_ANSWERS)
         ask = ui.ask
         def changed(prompt):
-            if "输入“开放”" in prompt:
+            if "确认开放？" in prompt:
                 callback()
             return ask(prompt)
         ui.ask = changed

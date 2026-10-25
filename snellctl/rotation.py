@@ -15,7 +15,7 @@ from .activation import _binding, _digest
 from .client import read_deployment
 from .deployment import render_files
 from .hostprep import STATE, PreparationError
-from .installer import Terminal, real_installation
+from .installer import Terminal, confirm, real_installation
 
 
 INTENT = "key-rotation-intent"
@@ -181,11 +181,10 @@ def run_rotation(*, factory=real_rotation, terminal=None):
             ui.say("会短暂中断节点连接，客户端必须更新；只生成所选的新随机密钥，不显示、不备份旧密钥。")
             ui.say("失败会尝试停止并禁用入口，保留待核查记录；不自动恢复。断电或强制终止可能绕过停用处理。")
             ui.say("请保留当前会话，通过不依赖本节点的连接另开 SSH，确认登录及恢复控制台可用。")
-            if ui.ask("输入“已重连”继续，其他输入取消：").strip() != "已重连":
+            if not confirm(ui, "已确认独立 SSH 新连接和恢复控制台可用？"):
                 ui.say("已取消；未更换密钥。")
                 return 130
-            confirm = "更换 Snell" if component == "snell" else "更换 ShadowTLS"
-            if ui.ask(f"输入“{confirm}”确认更换，其他输入取消：").strip() != confirm:
+            if not confirm(ui, f"确认仅更换 {LABELS[component]}？"):
                 ui.say("已取消；未更换密钥。")
                 return 130
             if not ui.interactive():

@@ -257,10 +257,10 @@ class Publication:
                                    ("无法确认任务已停止，必须人工核查。" if failures else "已停止并禁用定时器，不自动重试。")) from None
         return record
 
-    def _public_health(self, spec, record, *, renewal_record=None):
+    def _public_health(self, spec, record, *, renewal_record=None, renewal_timer=True):
         hook = f"/etc/letsencrypt/renewal-hooks/deploy/50-snellctl-{spec.node}-nginx"
         self._renewal_health(spec, self.prep._read_record("renewal-enable-ready") if renewal_record is None
-                             else renewal_record, timer=True)
+                             else renewal_record, timer=renewal_timer)
         self.local._health(spec, record["node"], public_entry=True, check_guards=False, allowed_deploy_hook=hook)
         rules, hashes, running = self._firewall(record["ssh_port"])
         if (_rules_digest(rules) != record["rules_sha256"] or hashes != record["unchanged_ufw"]

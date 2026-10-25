@@ -413,7 +413,7 @@ class RotationWorkflowTests(unittest.TestCase):
         self.plan = RotationPlan("snell", "node.example.net", 24443, "d" * 64)
         self.engine.check.return_value = self.plan
         self.engine.rotate.return_value = "key-rotated-external-test-required"
-        self.ui = Console(["1", "已重连", "更换 Snell"])
+        self.ui = Console(["1", "y", "y"])
 
     @contextmanager
     def factory(self):
@@ -431,10 +431,11 @@ class RotationWorkflowTests(unittest.TestCase):
         self.assertIn("client 或菜单 5", self.ui.text)
 
     def test_shadowtls_selection_and_distinct_confirmation(self):
-        self.ui = Console(["2", "已重连", "更换 ShadowTLS"])
+        self.ui = Console(["2", "y", "y"])
         self.engine.check.return_value = replace(self.plan, component="shadowtls")
         self.assertEqual(self.run_rotation(), 0)
         self.engine.check.assert_called_once_with("shadowtls")
+        self.assertIn("ShadowTLS 密码", self.ui.prompts[-1])
 
     def test_noninteractive_never_opens_host_adapter(self):
         self.ui.interactive = lambda: False
@@ -444,7 +445,7 @@ class RotationWorkflowTests(unittest.TestCase):
 
     def test_cancel_any_prompt_does_not_rotate(self):
         for index in range(3):
-            answers = ["1", "已重连", "更换 Snell"]
+            answers = ["1", "y", "y"]
             answers[index] = ""
             self.ui = Console(answers)
             self.assertEqual(self.run_rotation(), 130)
@@ -453,14 +454,14 @@ class RotationWorkflowTests(unittest.TestCase):
     def test_eof_or_ctrl_c_each_prompt_does_not_rotate(self):
         for error in (EOFError, KeyboardInterrupt):
             for index in range(3):
-                answers = ["1", "已重连", "更换 Snell"]
+                answers = ["1", "y", "y"]
                 answers[index] = error()
                 self.ui = Console(answers)
                 self.assertEqual(self.run_rotation(), 130)
         self.engine.rotate.assert_not_called()
 
-    def test_wrong_component_confirmation_cancels(self):
-        self.ui = Console(["1", "已重连", "更换 ShadowTLS"])
+    def test_legacy_chinese_confirmation_cancels(self):
+        self.ui = Console(["1", "y", "更换 Snell"])
         self.assertEqual(self.run_rotation(), 130)
         self.engine.rotate.assert_not_called()
 

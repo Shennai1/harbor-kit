@@ -13,7 +13,7 @@ import re
 from .activation import BINARIES
 from .deployment import NodeSecrets, NodeSpec, file_targets, render_files
 from .hostprep import Preparation, read_owned_files
-from .installer import Terminal
+from .installer import Terminal, confirm
 
 
 class ClientError(Exception):
@@ -165,7 +165,7 @@ def run_client(*, reader=real_reader, terminal=None):
         ui.say("配置包含两项明文密钥；终端回滚缓冲、录屏或会话记录可能保留它。不要发送给 AI 或公开分享。")
         ui.say("不会联网、自动获取 IP、写文件、换密钥或更改 Surge；配置读取也不代表服务健康。")
         address = public_ipv4(ui.ask("本台 VPS 的公网 IPv4（仅地址，不含端口）：").strip())
-        if ui.ask("输入“显示”读取并显示完整配置，其他输入取消：").strip() != "显示":
+        if not confirm(ui, "读取并显示含明文密钥的完整配置？"):
             ui.say("已取消；未读取或显示节点密钥。")
             return 130
         if not ui.interactive():

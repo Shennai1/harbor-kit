@@ -290,6 +290,8 @@ class Preparation:
             raise PreparationError("有未确认完成的密钥更换；保留现场，不重试或导出配置。")
         if self._exists("port-change-intent"):
             raise PreparationError("有未确认完成的端口更换；保留现场，不重试或导出配置。")
+        if self._exists("token-change-intent"):
+            raise PreparationError("有未确认完成的 Token 更换；保留凭据及续期状态，不重试或导出配置。")
 
     @contextmanager
     def _lock(self):
@@ -461,6 +463,7 @@ class Preparation:
             return {"format": 1, "mode": "preparation-records-only", "phases": phases,
                     "key_rotation": "needs-inspection" if self._exists("key-rotation-intent") else "none-pending",
                     "port_change": "needs-inspection" if self._exists("port-change-intent") else "none-pending",
+                    "token_change": "needs-inspection" if self._exists("token-change-intent") else "none-pending",
                     "deploy_ready": False, "renewal_enabled_by_this_engine": self._exists("renewal-enable-ready"),
                     "current_service_health": "not-checked"}
 

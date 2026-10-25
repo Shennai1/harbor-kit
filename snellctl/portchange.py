@@ -14,7 +14,7 @@ from .activation import _binding, _digest
 from .client import read_deployment
 from .deployment import render_files
 from .hostprep import STATE, PreparationError
-from .installer import Terminal, real_installation
+from .installer import Terminal, confirm, real_installation
 from .publish import Rule, _rules_digest
 
 
@@ -254,7 +254,7 @@ def run_port_change(*, factory=real_port_change, terminal=None):
         return 2
     attempted = False
     try:
-        ui.say("实验版公网端口更换：仅限本工具完整部署的 main / IPv4 TCP，尚待实机验收。")
+        ui.say("实验版公网端口更换：仅限本工具完整部署的 main / IPv4 TCP，仍需逐台验收。")
         raw = ui.ask("新的公网 TCP 端口（留空取消）：").strip()
         if not raw:
             ui.say("已取消；未读取或更换节点配置。")
@@ -270,11 +270,10 @@ def run_port_change(*, factory=real_port_change, terminal=None):
             ui.say("云安全组和公网可达性无法代查；请先确认新端口在服务商处可用。")
             ui.say("失败会尝试停止并禁用入口，不自动回退或清理防火墙；断电/强制终止可能绕过停用。")
             ui.say("保留本会话，通过不依赖本节点的连接另开 SSH，确认登录和恢复控制台可用。")
-            if ui.ask("输入“已重连”继续，其他输入取消：").strip() != "已重连":
+            if not confirm(ui, "已确认独立 SSH 新连接和恢复控制台可用？"):
                 ui.say("已取消；未更换端口。")
                 return 130
-            confirmation = f"更换端口 {plan.new_port}"
-            if ui.ask(f"输入“{confirmation}”继续，其他输入取消：").strip() != confirmation:
+            if not confirm(ui, f"确认将公网端口从 {plan.old_port} 更换为 {plan.new_port}？"):
                 ui.say("已取消；未更换端口。")
                 return 130
             if not ui.interactive():

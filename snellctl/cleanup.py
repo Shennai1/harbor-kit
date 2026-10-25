@@ -215,6 +215,8 @@ def render(report):
             lines.append("存在未确认完成的密钥更换，保留状态文件与候选配置，先核查现场。")
         if report["installation_records"].get("port_change") == "needs-inspection":
             lines.append("存在未确认完成的端口更换，保留防火墙、状态文件与候选配置，先核查现场。")
+        if report["installation_records"].get("token_change") == "needs-inspection":
+            lines.append("存在未确认完成的 Token 更换；自动续期可能停用，保留凭据和记录，先核查现场。")
         lines.append("相关路径（未列出的约定路径本次未发现；不是可删除清单）：")
         for item in report["paths"]:
             if item["status"] != "missing":

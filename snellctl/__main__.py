@@ -33,7 +33,7 @@ def main(argv: list[str] | None = None) -> int:
     doctor = commands.add_parser("doctor", help="只读检查当前机器，不修改配置")
     doctor.add_argument("--json", action="store_true", help="输出脱敏 JSON，不自动保存文件")
     menu = commands.add_parser("menu", help="SSH 中文交互菜单，默认只读")
-    menu.add_argument("--experimental", action="store_true", help="显示安装、接续、密钥及端口更换入口，仍需逐步确认")
+    menu.add_argument("--experimental", action="store_true", help="显示安装、接续、密钥、端口及 Token 更换入口，仍需逐步确认")
     install = commands.add_parser("install", help="实验版新机安装向导，会修改系统；仅限交互终端")
     install.add_argument("--experimental", action="store_true", help="明确开启未实机验收的安装向导")
     resume = commands.add_parser("resume", help="实验版受限接续；只允许本机验收完成且公网尚未开始的阶段")
@@ -42,6 +42,8 @@ def main(argv: list[str] | None = None) -> int:
     rotate.add_argument("--experimental", action="store_true", help="明确开启密钥更换，仍需交互确认")
     port = commands.add_parser("change-port", help="实验版：更换 IPv4 TCP 公网端口；会中断节点并调整 UFW")
     port.add_argument("--experimental", action="store_true", help="明确开启端口更换，仍需交互确认")
+    token = commands.add_parser("change-token", help="实验版：更换 Cloudflare Token 并验证续期；不改节点密钥")
+    token.add_argument("--experimental", action="store_true", help="明确开启 Token 更换，仍需交互确认")
     status = commands.add_parser("install-status", help="只读查看脱敏的安装阶段记录，不恢复、不检查服务健康")
     status.add_argument("--json", action="store_true")
     commands.add_parser("client", help="确认后在终端显示 Surge 配置（含密钥）；只读，不写文件")
@@ -91,6 +93,12 @@ def main(argv: list[str] | None = None) -> int:
             return 2
         from .portchange import run_port_change
         return run_port_change()
+    if args.command == "change-token":
+        if not args.experimental:
+            print("Token 更换仍属实验功能；需要明确提供 --experimental，不会自动执行。", file=sys.stderr)
+            return 2
+        from .tokenchange import run_token_change
+        return run_token_change()
     if args.command == "install":
         if not args.experimental:
             print("安装尚未完成实机验收；需要明确提供 --experimental，不会自动执行。", file=sys.stderr)

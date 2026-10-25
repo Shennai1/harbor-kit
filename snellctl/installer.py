@@ -71,9 +71,14 @@ class Terminal:
         return value
 
 
-def _confirm(ui, message, word):
+def confirm(ui, prompt):
+    """Only an explicit ASCII y/Y authorizes; blank or any other input cancels."""
+    return ui.ask(prompt + " [y/n]（默认 n）：").strip().lower() == "y"
+
+
+def _confirm(ui, message, action):
     ui.say(message)
-    if ui.ask(f"输入“{word}”继续，其他输入退出：").strip() != word:
+    if not confirm(ui, f"确认{action}？"):
         raise Cancelled
 
 
@@ -302,9 +307,12 @@ def render_status(report):
             lines.append("密钥更换：未确认完成；不要重试、删除记录、手动重启入口或导出配置。")
         if report.get("port_change") == "needs-inspection":
             lines.append("端口更换：未确认完成；保留防火墙及状态，不重试、重启或导出配置。")
+        if report.get("token_change") == "needs-inspection":
+            lines.append("Token 更换：未确认完成；自动续期可能已停用，保留新旧令牌并核查，不重试或删除记录。")
         if (report["phases"] == PENDING_PUBLIC_PHASES
                 and report.get("key_rotation") != "needs-inspection"
-                and report.get("port_change") != "needs-inspection"):
+                and report.get("port_change") != "needs-inspection"
+                and report.get("token_change") != "needs-inspection"):
             lines.append("记录符合受限接续候选阶段；可使用 resume --experimental 先复查现场，不代表已经允许开放。")
     lines.append("报告不含域名、IP、Token、密钥或原始日志；不会自动恢复、签发或删除任何文件。")
     return "\n".join(lines)
