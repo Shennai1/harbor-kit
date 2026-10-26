@@ -12,7 +12,7 @@ import re
 
 from .activation import _binding, _digest
 from .client import read_deployment
-from .hostprep import CREDENTIAL, STATE, STAGING, PreparationError
+from .hostprep import DOMAIN_CURRENT, STATE, STAGING, PreparationError
 from .installer import Terminal, confirm, real_installation
 
 
@@ -93,10 +93,10 @@ class TokenChange:
             raise PreparationError("未确认定时续期已暂停。")
         self._idle()
 
-    def _lineage(self, spec):
+    def _lineage(self, spec, *, credential_path=None):
         # Verify the supported symlinks before snapshotting their archive targets.
         hook = f"/etc/letsencrypt/renewal-hooks/deploy/50-snellctl-{spec.node}-nginx"
-        self.prep._verify_certificate(spec, allowed_deploy_hook=hook)
+        self.prep._verify_certificate(spec, allowed_deploy_hook=hook, credential_path=credential_path)
         result = {}
         for name in ("cert", "chain", "fullchain", "privkey"):
             live = spec.cert_dir + "/" + name + ".pem"
@@ -120,10 +120,11 @@ class TokenChange:
         self._idle()
         with self.files.directory("/etc/snellctl/credentials", private=True):
             pass
-        for path in (CANDIDATE, CREDENTIAL + ".snellctl-new", STATE + "/" + CURRENT + ".json.snellctl-new"):
-            if self.files.info(path) is not None:
+        path = self.prep.credential_path(spec)
+        for pending in (CANDIDATE, path + ".snellctl-new", STATE + "/" + CURRENT + ".json.snellctl-new"):
+            if self.files.info(pending) is not None:
                 raise PreparationError("有未处理的凭据候选文件；不覆盖或删除。")
-        credential = self._credential(CREDENTIAL)
+        credential = self._credential(path)
         current = None
         if self.prep._exists(CURRENT):
             if self.prep._read_record(CURRENT) != {"format": 1, **credential}:
@@ -132,6 +133,9 @@ class TokenChange:
         unchanged = {"lineage": self._lineage(spec), "records": {
             STATE + "/" + name + ".json": self._snapshot(STATE + "/" + name + ".json", 0o600)
             for name in UNCHANGED_RECORDS}}
+        if self.prep._exists(DOMAIN_CURRENT):
+            mapping = STATE + "/" + DOMAIN_CURRENT + ".json"
+            unchanged["records"][mapping] = self._snapshot(mapping, 0o600)
         revision = _digest(_json_bytes({"public": record, "credential": credential,
                                        "current": current, "unchanged": unchanged}))
         return TokenPlan(spec.domain, revision), spec, record, credential, current, unchanged
@@ -181,6 +185,7 @@ class TokenChange:
         content = ("dns_cloudflare_api_token = " + token + "\n").encode("ascii")
         with self.prep._lock():
             current_plan, spec, record, old, current, unchanged = self._check()
+            credential_path = self.prep.credential_path(spec)
             if current_plan != plan or old["sha256"] == _digest(content):
                 raise PreparationError("现场已变化或新旧 Token 相同；未更换。")
             intent = {"format": 1, "binding": record["binding"], "before_sha256": old["sha256"],
@@ -198,15 +203,15 @@ class TokenChange:
                 self._dry_run(spec, CANDIDATE)
                 self._health_paused(spec, record, unchanged)
                 self._expect(CANDIDATE, candidate, 0o600)
-                self._expect(CREDENTIAL, old, 0o600)
-                self.files.replace_owned(CREDENTIAL, content, identity=old["identity"], digest=old["sha256"], mode=0o600)
-                saved = self._credential(CREDENTIAL)
+                self._expect(credential_path, old, 0o600)
+                self.files.replace_owned(credential_path, content, identity=old["identity"], digest=old["sha256"], mode=0o600)
+                saved = self._credential(credential_path)
                 if saved["sha256"] != _digest(content):
                     raise PreparationError("正式凭据写入结果不符。")
                 # Re-test the unchanged renewal path, not just the candidate override.
-                self._dry_run(spec, CREDENTIAL)
+                self._dry_run(spec, credential_path)
                 self._health_paused(spec, record, unchanged)
-                self._expect(CREDENTIAL, saved, 0o600)
+                self._expect(credential_path, saved, 0o600)
                 self._expect(CANDIDATE, candidate, 0o600)
                 value = {"format": 1, **saved}
                 path = STATE + "/" + CURRENT + ".json"
@@ -222,7 +227,7 @@ class TokenChange:
                 self.prep._run(["systemctl", "enable", "--now", "certbot.timer"])
                 self.public._public_health(spec, record)
                 self._expect_records(unchanged)
-                self._expect(CREDENTIAL, saved, 0o600)
+                self._expect(credential_path, saved, 0o600)
                 self._expect(path, committed, 0o600)
                 self._expect(STATE + "/" + INTENT + ".json", marker, 0o600)
                 self.files.unlink_owned(STATE + "/" + INTENT + ".json", marker["identity"])

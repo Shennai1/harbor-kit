@@ -5,7 +5,7 @@ import json
 import time
 
 from .activation import _digest
-from .hostprep import CREDENTIAL, STATE, Command, PreparationError, Reply
+from .hostprep import STATE, Command, PreparationError, Reply
 from .installer import Terminal, confirm
 from .tokenchange import CANDIDATE, CURRENT, INTENT, _json_bytes, dry_run_args, real_token_change
 from .tokendiag import (RECHECK_LOGS, RECHECK_REPORT, RECHECK_STARTED,
@@ -91,12 +91,13 @@ class TokenResume:
             raise PreparationError("需要明确确认替换凭据和恢复自动续期。")
         with self.prep._lock():
             checked, spec, record, unchanged = self._check()
+            credential_path = self.prep.credential_path(spec)
             if checked != plan:
                 raise PreparationError("确认期间现场变化，未执行接续。")
             intent = self.prep._read_record(INTENT)
             intent_path = STATE + "/" + INTENT + ".json"
             current_path = STATE + "/" + CURRENT + ".json"
-            old = unchanged["records"].pop(CREDENTIAL)
+            old = unchanged["records"].pop(credential_path)
             candidate = unchanged["records"].pop(CANDIDATE)
             current = unchanged["records"].pop(current_path, None)
             unchanged["absent"] = [p for p in unchanged["absent"] if p != current_path]
@@ -114,19 +115,19 @@ class TokenResume:
                 self.files.private_directory_new(LOGS)
                 self.tokens._health_paused(spec, record, unchanged)
                 self._absent(unchanged["absent"])
-                self.tokens._expect(CREDENTIAL, old, 0o600)
+                self.tokens._expect(credential_path, old, 0o600)
                 self.tokens._expect(CANDIDATE, candidate, 0o600)
                 content = self.files.read(CANDIDATE, mode=0o600)
                 if _digest(content) != candidate["sha256"]:
                     raise PreparationError("候选凭据在核对后变化。")
                 self._phase("credential-replace")
                 report["credential_replace_attempted"] = True
-                self.files.replace_owned(CREDENTIAL, content, identity=old["identity"], digest=old["sha256"], mode=0o600)
-                saved = self.tokens._credential(CREDENTIAL)
+                self.files.replace_owned(credential_path, content, identity=old["identity"], digest=old["sha256"], mode=0o600)
+                saved = self.tokens._credential(credential_path)
                 if saved["sha256"] != candidate["sha256"]:
                     raise PreparationError("正式凭据替换结果不符。")
                 self._phase("fixed-path-dry-run")
-                args = dry_run_args(spec, CREDENTIAL)
+                args = dry_run_args(spec, credential_path)
                 args[args.index("--logs-dir") + 1] = LOGS
                 args.append("--no-random-sleep-on-renew")
                 reply = self.prep.runner(Command(tuple(args), 600, capture_stderr=True))
@@ -141,7 +142,7 @@ class TokenResume:
                 self._phase("paused-postcheck")
                 self.tokens._health_paused(spec, record, unchanged)
                 self._absent(unchanged["absent"])
-                self.tokens._expect(CREDENTIAL, saved, 0o600)
+                self.tokens._expect(credential_path, saved, 0o600)
                 self.tokens._expect(CANDIDATE, candidate, 0o600)
                 report["fixed_path_test_passed"] = True
                 self._phase("credential-record")
@@ -158,7 +159,7 @@ class TokenResume:
                 self.files.unlink_owned(CANDIDATE, candidate["identity"])
                 self._phase("renewal-enable")
                 self.tokens._health_paused(spec, record, unchanged)
-                self.tokens._expect(CREDENTIAL, saved, 0o600)
+                self.tokens._expect(credential_path, saved, 0o600)
                 self.tokens._expect(current_path, committed, 0o600)
                 self._absent([*unchanged["absent"], CANDIDATE])
                 self.prep._run(["systemctl", "enable", "--now", "certbot.timer"])
@@ -167,7 +168,7 @@ class TokenResume:
                 # instead of requiring the pre-enable certificate bytes to persist.
                 self.tokens.public._public_health(spec, record)
                 self.tokens._expect_records(unchanged)
-                self.tokens._expect(CREDENTIAL, saved, 0o600)
+                self.tokens._expect(credential_path, saved, 0o600)
                 self.tokens._expect(current_path, committed, 0o600)
                 self._absent([*unchanged["absent"], CANDIDATE])
                 self._phase("intent-cleanup")
@@ -189,7 +190,7 @@ class TokenResume:
             finally:
                 report["elapsed_seconds"] = int(time.monotonic() - started)
                 try:
-                    digest = self.tokens._credential(CREDENTIAL)["sha256"]
+                    digest = self.tokens._credential(credential_path)["sha256"]
                     report["fixed_credential_matches"] = ("after" if digest == intent["after_sha256"] else
                                                           "before" if digest == intent["before_sha256"] else "neither")
                 except BaseException:

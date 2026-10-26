@@ -26,6 +26,7 @@ def run_menu(*, experimental=False) -> int:
                 print("8. 单独更换节点密钥（会中断节点，需更新客户端）")
                 print("9. 更换公网入口端口（会中断节点并调整 UFW）")
                 print("10. 更换 Cloudflare Token（会暂停续期并执行 DNS 演练）")
+                print("11. 更换域名和证书（需新区域令牌及更新客户端 SNI）")
             print("0. 退出")
             choice = input("选择：").strip()
             if choice == "0":
@@ -72,6 +73,10 @@ def run_menu(*, experimental=False) -> int:
                 from .tokenchange import run_token_change
                 changes_attempted = True
                 run_token_change()
+            elif choice == "11" and experimental:
+                from .domainchange import run_domain_change
+                changes_attempted = True
+                run_domain_change()
             else:
                 print("请选择菜单中已有的编号。")
     except (EOFError, KeyboardInterrupt):

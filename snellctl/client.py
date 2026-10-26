@@ -125,6 +125,7 @@ def _read_deployment_snapshot(prep):
     expected = {**{path: 0o755 for path in BINARIES}, **{t.path: t.mode for t in paths}}
     snapshot = read_owned_files(prep.files, expected, node)
     spec, keys = _parse_snapshot(snapshot)
+    prep.credential_path(spec)
     if prep._read_record("certificate-ready") != {"domain_sha256": hashlib.sha256(spec.domain.encode()).hexdigest()}:
         raise ClientError("证书域名记录不一致。")
     if prep._read_record("public-firewall-added") != {

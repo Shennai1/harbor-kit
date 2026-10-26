@@ -7,7 +7,7 @@ import time
 
 from .activation import _binding, _digest
 from .client import _read_deployment_snapshot
-from .hostprep import CREDENTIAL, STATE, Command, PreparationError, Reply
+from .hostprep import DOMAIN_CURRENT, STATE, Command, PreparationError, Reply
 from .installer import Terminal, confirm
 from .tokenchange import (CANDIDATE, CURRENT, INTENT, UNCHANGED_RECORDS, _json_bytes,
                           dry_run_args, dry_run_evidence, real_token_change)
@@ -120,10 +120,12 @@ class TokenDiagnostic:
         # Shared by diagnostics and the separately gated completion command.
         # Callers must hold the preparation lock and validate their own records.
         self._phase("pending-state-check")
-        for name in ("key-rotation-intent", "port-change-intent"):
+        for name in ("key-rotation-intent", "port-change-intent", "domain-change-intent"):
             if self.prep._exists(name):
                 raise PreparationError("有其他未完成变更，保留现场。")
-        for path in (CREDENTIAL + ".snellctl-new", STATE + "/" + CURRENT + ".json.snellctl-new"):
+        spec, _keys, record = _read_deployment_snapshot(self.prep)
+        credential_path = self.prep.credential_path(spec)
+        for path in (credential_path + ".snellctl-new", STATE + "/" + CURRENT + ".json.snellctl-new"):
             if self.files.info(path) is not None:
                 raise PreparationError("发现不应存在的临时文件，保留现场。")
         intent = self.prep._read_record(INTENT)
@@ -136,7 +138,7 @@ class TokenDiagnostic:
         self._phase("credential-check")
         with self.files.directory("/etc/snellctl/credentials", private=True):
             pass
-        old, candidate = self.tokens._credential(CREDENTIAL), self.tokens._credential(CANDIDATE)
+        old, candidate = self.tokens._credential(credential_path), self.tokens._credential(CANDIDATE)
         if old["sha256"] != intent["before_sha256"] or candidate["sha256"] != intent["after_sha256"]:
             raise PreparationError("只允许旧凭据尚未替换、候选仍匹配本轮输入的现场。")
         if self.prep._exists(CURRENT) and self.prep._read_record(CURRENT) != {"format": 1, **old}:
@@ -144,21 +146,23 @@ class TokenDiagnostic:
         self._phase("deployment-check")
         # Only explicit pending-state workflows permit this Token state. Ordinary
         # management/export still calls read_deployment and refuses every intent.
-        spec, _keys, record = _read_deployment_snapshot(self.prep)
         spec = self.tokens.local._version(spec)
         if record["binding"] != _binding(spec) or record["binding"] != intent["binding"]:
             raise PreparationError("当前部署和更换意图不一致。")
         self.tokens.public._validate_node(spec, record["ssh_port"])
         snapshots = {STATE + "/" + name + ".json": self.tokens._snapshot(STATE + "/" + name + ".json", 0o600)
                      for name in (*UNCHANGED_RECORDS, INTENT)}
-        snapshots.update({CREDENTIAL: old, CANDIDATE: candidate})
+        snapshots.update({credential_path: old, CANDIDATE: candidate})
+        if self.prep._exists(DOMAIN_CURRENT):
+            path = STATE + "/" + DOMAIN_CURRENT + ".json"
+            snapshots[path] = self.tokens._snapshot(path, 0o600)
         if self.prep._exists(CURRENT):
             path = STATE + "/" + CURRENT + ".json"
             snapshots[path] = self.tokens._snapshot(path, 0o600)
         if self.after_permission_fix:
             snapshots.update(self._previous_failure(intent, spec))
-        absent = [STATE + "/" + name + ".json" for name in ("key-rotation-intent", "port-change-intent")]
-        absent += [CREDENTIAL + ".snellctl-new", STATE + "/" + CURRENT + ".json.snellctl-new"]
+        absent = [STATE + "/" + name + ".json" for name in ("key-rotation-intent", "port-change-intent", "domain-change-intent")]
+        absent += [credential_path + ".snellctl-new", STATE + "/" + CURRENT + ".json.snellctl-new"]
         if not self.prep._exists(CURRENT):
             absent.append(STATE + "/" + CURRENT + ".json")
         unchanged = {"lineage": self.tokens._lineage(spec), "records": snapshots, "absent": absent}

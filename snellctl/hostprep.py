@@ -24,6 +24,7 @@ from .preflight import DEPENDENCIES, candidates
 STATE = "/var/lib/snellctl/preparation"
 APT_LISTS = "/var/lib/snellctl/apt-lists"
 CREDENTIAL = "/etc/snellctl/credentials/cloudflare-main.ini"
+DOMAIN_CURRENT = "domain-current"
 UNITS = ("nginx.service", "certbot.service", "certbot.timer")
 POLICY = "/usr/sbin/policy-rc.d"
 POLICY_BYTES = b'''#!/bin/sh
@@ -60,6 +61,10 @@ APT_SECURITY = (
 
 class PreparationError(Exception):
     """Fixed, nonsecret operator messages only."""
+
+
+def domain_credential(spec):
+    return "/etc/snellctl/credentials/cloudflare-domain-" + hashlib.sha256(spec.domain.encode()).hexdigest() + ".ini"
 
 
 @dataclass(frozen=True)
@@ -286,6 +291,8 @@ class Preparation:
         return self.files.info(STATE + "/" + name + ".json") is not None
 
     def _no_pending_change(self):
+        if self._exists("domain-change-intent"):
+            raise PreparationError("有未确认完成的域名更换；保留证书、凭据和续期现场，不重试或导出配置。")
         if self._exists("key-rotation-intent"):
             raise PreparationError("有未确认完成的密钥更换；保留现场，不重试或导出配置。")
         if self._exists("port-change-intent"):
@@ -464,6 +471,7 @@ class Preparation:
                     "key_rotation": "needs-inspection" if self._exists("key-rotation-intent") else "none-pending",
                     "port_change": "needs-inspection" if self._exists("port-change-intent") else "none-pending",
                     "token_change": "needs-inspection" if self._exists("token-change-intent") else "none-pending",
+                    "domain_change": "needs-inspection" if self._exists("domain-change-intent") else "none-pending",
                     "deploy_ready": False, "renewal_enabled_by_this_engine": self._exists("renewal-enable-ready"),
                     "current_service_health": "not-checked"}
 
@@ -552,7 +560,17 @@ class Preparation:
             self._record(phase + "-ready", {"domain_sha256": binding})
             return "certificate-verified-services-blocked" if production else "dns-test-passed"
 
-    def _verify_certificate(self, spec, *, allowed_deploy_hook=None):
+    def credential_path(self, spec):
+        if not self._exists(DOMAIN_CURRENT):
+            return CREDENTIAL
+        if self._read_record(DOMAIN_CURRENT) != {"format": 1, "domain_sha256": hashlib.sha256(spec.domain.encode()).hexdigest()}:
+            raise PreparationError("当前域名与凭据归属记录不符。")
+        return domain_credential(spec)
+
+    def _verify_certificate(self, spec, *, allowed_deploy_hook=None, credential_path=None):
+        expected_credential = self.credential_path(spec) if credential_path is None else credential_path
+        if expected_credential not in {CREDENTIAL, domain_credential(spec)}:
+            raise PreparationError("证书凭据路径不属于本工具。")
         # Certbot live symlinks are accepted only when pointing at this lineage's archive.
         archive_files = {}
         for name in ("cert", "chain", "fullchain", "privkey"):
@@ -581,7 +599,7 @@ class Preparation:
             config.read_string("[lineage]\n" + renewal)
             params = config["renewalparams"]
             if (params.get("authenticator") != "dns-cloudflare" or params.get("server") != PRODUCTION
-                    or params.get("dns_cloudflare_credentials") != CREDENTIAL
+                    or params.get("dns_cloudflare_credentials") != expected_credential
                     or params.get("key_type") != "ecdsa"
                     or params.get("autorenew", "true").lower() not in {"true", "1"}
                     or any(params.get(key, "").strip() for key in ("pre_hook", "post_hook", "installer"))

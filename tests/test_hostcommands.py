@@ -78,6 +78,21 @@ class CommandRunnerTests(unittest.TestCase):
         with self.assertRaises(PreparationError):
             self.runner()(Command((SHADOWTLS_BINARY, "server")))
 
+    def test_domain_issuance_can_capture_output_only_with_required_guards(self):
+        from snellctl.deployment import NodeSpec
+        from snellctl.domainchange import issue_args
+        import subprocess
+        real_popen = subprocess.Popen
+        def child(args, **kwargs):
+            return real_popen([sys.executable, "-c", "import sys; print('issuance marker', file=sys.stderr)"], **kwargs)
+        args = issue_args(NodeSpec("other.example.org"), "/private-test-log", production=True)
+        with patch("snellctl.hostcommands.subprocess.Popen", side_effect=child):
+            result = self.runner()(Command(tuple(args), capture_stderr=True))
+        self.assertEqual(result.output, "issuance marker\n")
+        for guard in ("--non-interactive", "--no-directory-hooks", "--dns-cloudflare"):
+            with self.assertRaises(PreparationError):
+                self.runner()(Command(tuple(a for a in args if a != guard), capture_stderr=True))
+
     def test_firewall_backend_is_read_only(self):
         for program in ("iptables", "ip6tables"):
             for args in (("-F",), ("-P", "INPUT", "ACCEPT"), ("-A", "INPUT", "-j", "ACCEPT"), ("-S", "OUTPUT")):

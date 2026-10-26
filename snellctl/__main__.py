@@ -49,6 +49,8 @@ def main(argv: list[str] | None = None) -> int:
     diagnosis.add_argument("--after-permission-fix", action="store_true", help="同一令牌的云端权限修正后单次复测；保留原诊断，不提交更换")
     token_resume = commands.add_parser("resume-token", help="实验版：权限复测通过后接续凭据替换和自动续期")
     token_resume.add_argument("--experimental", action="store_true", help="明确开启受限 Token 接续，仍需交互确认")
+    domain_change = commands.add_parser("change-domain", help="实验版：更换域名及独立凭据，验证证书和续期；需更新客户端 SNI")
+    domain_change.add_argument("--experimental", action="store_true", help="明确开启域名更换，仍需交互确认")
     status = commands.add_parser("install-status", help="只读查看脱敏的安装阶段记录，不恢复、不检查服务健康")
     status.add_argument("--json", action="store_true")
     commands.add_parser("client", help="确认后在终端显示 Surge 配置（含密钥）；只读，不写文件")
@@ -110,6 +112,12 @@ def main(argv: list[str] | None = None) -> int:
             return 2
         from .tokendiag import run_token_diagnostic
         return run_token_diagnostic(after_permission_fix=args.after_permission_fix)
+    if args.command == "change-domain":
+        if not args.experimental:
+            print("域名更换需要 --experimental，且仍需交互确认。", file=sys.stderr)
+            return 2
+        from .domainchange import run_domain_change
+        return run_domain_change()
     if args.command == "resume-token":
         if not args.experimental:
             print("Token 接续需要 --experimental，且仍需交互确认。", file=sys.stderr)
