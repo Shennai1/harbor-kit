@@ -109,10 +109,21 @@ class TokenDiagnostic:
 
     def _check(self):
         self._phase("pending-state-check")
-        for name in ("key-rotation-intent", "port-change-intent", self.started, self.report):
+        for name in (self.started, self.report):
             if self.prep._exists(name):
                 raise PreparationError("已有其他变更或本次诊断记录，不重复执行。")
-        for path in (self.logs, CREDENTIAL + ".snellctl-new", STATE + "/" + CURRENT + ".json.snellctl-new"):
+        if self.files.info(self.logs) is not None:
+            raise PreparationError("已有诊断日志，不重复执行。")
+        return self._pending_snapshot()
+
+    def _pending_snapshot(self):
+        # Shared by diagnostics and the separately gated completion command.
+        # Callers must hold the preparation lock and validate their own records.
+        self._phase("pending-state-check")
+        for name in ("key-rotation-intent", "port-change-intent"):
+            if self.prep._exists(name):
+                raise PreparationError("有其他未完成变更，保留现场。")
+        for path in (CREDENTIAL + ".snellctl-new", STATE + "/" + CURRENT + ".json.snellctl-new"):
             if self.files.info(path) is not None:
                 raise PreparationError("发现不应存在的临时文件，保留现场。")
         intent = self.prep._read_record(INTENT)
@@ -131,7 +142,7 @@ class TokenDiagnostic:
         if self.prep._exists(CURRENT) and self.prep._read_record(CURRENT) != {"format": 1, **old}:
             raise PreparationError("当前凭据记录不匹配。")
         self._phase("deployment-check")
-        # Only this diagnostic permits this exact pending Token state. Ordinary
+        # Only explicit pending-state workflows permit this Token state. Ordinary
         # management/export still calls read_deployment and refuses every intent.
         spec, _keys, record = _read_deployment_snapshot(self.prep)
         spec = self.tokens.local._version(spec)

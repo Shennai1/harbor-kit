@@ -16,6 +16,7 @@ Nginx，完成自有域名 HTTPS 环境的部署与 SSH 中文菜单管理。
 新增 `change-token --experimental`，单独更换 Cloudflare API Token，执行两次 DNS 演练并恢复自动续期；尚待实机验收。
 首次 Token 更换实测未完成，新增 `diagnose-token --experimental` 仅对尚未替换的候选执行单次诊断；不恢复或提交更换。
 独立诊断出现 TXT 写入认证失败，用户确认候选原为 DNS 读取权限；修正后可用 `--after-permission-fix` 单次复测，仍不提交更换。
+权限修正后的候选复测已实机通过；新增 `resume-token --experimental` 受限接续正式替换和续期恢复，尚待实机验收。
 升级、通用系统变更恢复和卸载入口尚未实现。
 
 手工部署基线已由用户在 Debian 13 / amd64 上验证：Snell 5.0.1 + ShadowTLS 0.2.25
@@ -195,6 +196,8 @@ DNS 演练与正式签发分离、证书验收及中断后禁止盲目重试。
 更换失败且正式凭据尚未替换时，可经只读核查与单独确认运行 `diagnose-token --experimental`。
 已有完整 TXT 写入认证失败记录、同一令牌已修正云端权限时，可加 `--after-permission-fix` 执行一次复测；
 保留原诊断，不重新输入令牌、不自动恢复续期，不提供反复重试。详见 [Token 更换](docs/token-change.md)。
+权限复测成功且正式凭据尚未替换时，可经独立确认运行 `resume-token --experimental`：
+替换凭据后验证正式路径，成功才恢复续期并清理候选/意图；不是通用失败恢复，不自动重试或回退。
 它执行一次 staging DNS/重载演练，保存退出码及脱敏报告；独立原始日志留在 root-only 目录，不能公开。
 不修改节点/防火墙，不替换正式凭据，不恢复 timer，不清理意图；诊断通过也不代表更换完成。
 诊断开始后阻止重复运行，当前同样仅有本地测试，详见上述文档。
