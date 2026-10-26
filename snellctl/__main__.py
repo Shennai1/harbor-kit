@@ -56,6 +56,8 @@ def main(argv: list[str] | None = None) -> int:
     commands.add_parser("client", help="确认后在终端显示 Surge 配置（含密钥）；只读，不写文件")
     cleanup = commands.add_parser("cleanup-plan", help="清理前只读盘点 main；不认领、不卸载、不生成删除命令")
     cleanup.add_argument("--json", action="store_true", help="输出脱敏报告，不自动保存文件")
+    inventory = commands.add_parser("domain-inventory", help="只读盘点现用及保留证书的凭据引用；不清理")
+    inventory.add_argument("--json", action="store_true", help="输出匿名引用报告，不保存文件")
     plan = commands.add_parser("plan", help="离线预览部署计划，不读取或更改当前机器")
     _spec_arguments(plan)
     plan.add_argument("--json", action="store_true", help="输出不含密钥的计划 JSON")
@@ -80,6 +82,11 @@ def main(argv: list[str] | None = None) -> int:
         elif action == "recover":
             command.add_argument("--action", required=True, choices=("resume", "rollback"))
     args = parser.parse_args(argv)
+    if args.command == "domain-inventory":
+        from .domaininventory import collect as inventory_collect, exit_code, render as inventory_render
+        report = inventory_collect()
+        print(json.dumps(report, ensure_ascii=False, indent=2) if args.json else inventory_render(report))
+        return exit_code(report)
     if args.command == "cleanup-plan":
         from .cleanup import collect as cleanup_collect, exit_code, render as cleanup_render
         report = cleanup_collect()
