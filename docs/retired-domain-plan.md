@@ -2,7 +2,7 @@
 
 `retired-domain-plan` 或普通菜单 13，只核对用户明确输入的一个旧完整域名。
 适用范围仍为本工具完整管理的 Debian 13 / amd64 / IPv4 TCP 单节点 main。
-它不是清理器，没有 `--apply`、自动确认或删除入口；当前只有本地测试，尚待实机反馈。
+它不是清理器，没有 `--apply`、自动确认或删除入口；有限范围及现用本机检查已有一轮用户实测通过反馈。
 
 ```bash
 python3 -E -s -B -m snellctl retired-domain-plan
@@ -54,7 +54,8 @@ python3 -E -s -B -m snellctl retired-domain-plan
 本轮候选审查范围是旧证书组、其续期配置及其独立本地凭据文件。
 现用节点/证书、软件包、ACME 账户、历史日志、DNS 和 Cloudflare 令牌撤销均排除在外。
 
-未来执行清理时应使用 Certbot 的证书删除接口，而不是手动删除其目录；删除前须移除实际引用。
+后续清理使用独立的实验入口及两次确认，见 [旧域名资源清理](retired-domain-cleanup.md)。
+使用 Certbot 的证书删除接口，而不是手动删除其目录；删除前须移除实际引用。
 删除本地证书也不等同吊销证书，参见 [Certbot 安全删除说明](https://eff-certbot.readthedocs.io/en/stable/using.html#deleting-certificates)。
 本版路径检查依据 [Certbot 4.0 存储实现](https://github.com/certbot/certbot/blob/v4.0.0/certbot/certbot/_internal/storage.py)，
 不代表兼容所有其他 Certbot 版本或自定义配置。

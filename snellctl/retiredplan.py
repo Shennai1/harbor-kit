@@ -156,36 +156,41 @@ class RetiredPlan:
             names, state = inventory.scan(path)
             _require(state in {"observed", "missing"} and set(names) == expected, "extra-nginx-or-renewal-hook-scope")
 
+    def inspect_locked(self, domain):
+        """Internal live snapshot; caller holds the preparation lock."""
+        self._phase("target-validation")
+        target = NodeSpec(domain)
+        current = read_deployment(self.prep)[0]
+        _require(target.domain != current.domain, "target-is-current-domain")
+        self._phase("current-health-check")
+        before = self.tokens._check()
+        current = before[1]
+        self._phase("bounded-inventory")
+        initial_inventory = collect_locked(self.prep)
+        _require(initial_inventory["collection_complete"], "inventory-incomplete")
+        inventory = Inventory(self.files)
+        self._phase("target-lineage-check")
+        credential, counts = self._target(inventory, target, self.prep.credential_path(current))
+        self._phase("history-check")
+        history = self._history(inventory, target, current)
+        _require(history["initial_domain_digest_match"] or history["target_domain_change_success_record"],
+                 "target-history-not-found")
+        self._phase("shared-reference-check")
+        self._references(inventory, target, credential)
+        self._phase("unchanged-health-check")
+        _require(self.tokens._check()[0] == before[0], "current-deployment-changed")
+        _require(collect_locked(self.prep) == initial_inventory, "inventory-changed")
+        inventory.recheck()
+        return target, before, inventory, credential, counts, history
+
     def check(self, domain):
         report = {"format": 1, "operation": "retired-domain-plan", "result": "blocked-preserve-all",
                   "cleanup_authorized": False, "host_changes_attempted": False, "report_saved": False,
                   "all_assets_preserved": True, "current_service_health": "not-confirmed",
                   "global_reference_check": "not-performed", "limitations": list(LIMITATIONS)}
         try:
-            self._phase("target-validation")
-            target = NodeSpec(domain)
             with self.prep._lock():
-                current = read_deployment(self.prep)[0]
-                _require(target.domain != current.domain, "target-is-current-domain")
-                self._phase("current-health-check")
-                before = self.tokens._check()
-                current = before[1]
-                self._phase("bounded-inventory")
-                initial_inventory = collect_locked(self.prep)
-                _require(initial_inventory["collection_complete"], "inventory-incomplete")
-                inventory = Inventory(self.files)
-                self._phase("target-lineage-check")
-                credential, counts = self._target(inventory, target, self.prep.credential_path(current))
-                self._phase("history-check")
-                history = self._history(inventory, target, current)
-                _require(history["initial_domain_digest_match"] or history["target_domain_change_success_record"],
-                         "target-history-not-found")
-                self._phase("shared-reference-check")
-                self._references(inventory, target, credential)
-                self._phase("unchanged-health-check")
-                _require(self.tokens._check()[0] == before[0], "current-deployment-changed")
-                _require(collect_locked(self.prep) == initial_inventory, "inventory-changed")
-                inventory.recheck()
+                _target, _before, _inventory, _credential, counts, history = self.inspect_locked(domain)
                 report.update(result="scope-checked-confirmation-required", current_service_health="local-checks-passed",
                               history=history, target_counts=counts, target_credential="independent-only-target-renewal",
                               review_scope=["selected-retired-certificate-lineage", "its-renewal-configuration",

@@ -51,9 +51,11 @@ class DebianCommands:
         capture_allowed = (command.argv in {("nginx", "-v"), (SNELL_BINARY, "--version"), (SHADOWTLS_BINARY, "--version")}
                            or (command.argv[:2] == ("certbot", "renew") and "--dry-run" in command.argv)
                            or (command.argv[:2] == ("certbot", "certonly") and "--dns-cloudflare" in command.argv
+                               and "--non-interactive" in command.argv and "--no-directory-hooks" in command.argv)
+                           or (command.argv[:2] == ("certbot", "delete") and "--cert-name" in command.argv
                                and "--non-interactive" in command.argv and "--no-directory-hooks" in command.argv))
         if type(command.capture_stderr) is not bool or (command.capture_stderr and not capture_allowed):
-            raise PreparationError("仅版本检查、续期演练或受限 DNS 签发允许内部捕获错误输出。")
+            raise PreparationError("仅版本检查及受限证书操作允许内部捕获错误输出。")
         args = [PROGRAMS[command.argv[0]], *command.argv[1:]]
         try:
             # Anonymous local output avoids pipe deadlocks and unbounded RAM capture.

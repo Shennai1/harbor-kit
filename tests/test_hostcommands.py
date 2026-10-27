@@ -99,6 +99,21 @@ class CommandRunnerTests(unittest.TestCase):
                 with self.subTest(program=program, args=args), self.assertRaises(PreparationError):
                     self.runner()(Command((program, *args)))
 
+    def test_retired_delete_captures_private_output_only_with_guards(self):
+        from snellctl.retiredcleanup import delete_args
+        import subprocess
+        real_popen = subprocess.Popen
+        def child(args, **kwargs):
+            return real_popen([sys.executable, "-c", "import sys; print('private delete output', file=sys.stderr)"], **kwargs)
+        args = delete_args("retired.example.org", "/private-test-log")
+        with patch("snellctl.hostcommands.subprocess.Popen", side_effect=child):
+            result = self.runner()(Command(tuple(args), capture_stderr=True))
+        self.assertEqual(result.output, "private delete output\n")
+        self.assertNotIn("private delete output", repr(result))
+        for guard in ("--non-interactive", "--no-directory-hooks", "--cert-name"):
+            with self.assertRaises(PreparationError):
+                self.runner()(Command(tuple(a for a in args if a != guard), capture_stderr=True))
+
     def test_real_timeout_returns_uncertain_after_reaping_process(self):
         reply = self.run_python("import time; time.sleep(60)", timeout=0.1)
         self.assertTrue(reply.uncertain)

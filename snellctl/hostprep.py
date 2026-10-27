@@ -291,6 +291,8 @@ class Preparation:
         return self.files.info(STATE + "/" + name + ".json") is not None
 
     def _no_pending_change(self):
+        if self._exists("retired-cleanup-intent"):
+            raise PreparationError("有未确认完成的旧域名清理；保留现场，核查文件及续期状态，不重试或导出配置。")
         if self._exists("domain-change-intent"):
             raise PreparationError("有未确认完成的域名更换；保留证书、凭据和续期现场，不重试或导出配置。")
         if self._exists("key-rotation-intent"):
@@ -472,6 +474,7 @@ class Preparation:
                     "port_change": "needs-inspection" if self._exists("port-change-intent") else "none-pending",
                     "token_change": "needs-inspection" if self._exists("token-change-intent") else "none-pending",
                     "domain_change": "needs-inspection" if self._exists("domain-change-intent") else "none-pending",
+                    "retired_cleanup": "needs-inspection" if self._exists("retired-cleanup-intent") else "none-pending",
                     "deploy_ready": False, "renewal_enabled_by_this_engine": self._exists("renewal-enable-ready"),
                     "current_service_health": "not-checked"}
 

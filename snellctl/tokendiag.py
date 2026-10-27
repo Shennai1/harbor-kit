@@ -120,7 +120,7 @@ class TokenDiagnostic:
         # Shared by diagnostics and the separately gated completion command.
         # Callers must hold the preparation lock and validate their own records.
         self._phase("pending-state-check")
-        for name in ("key-rotation-intent", "port-change-intent", "domain-change-intent"):
+        for name in ("key-rotation-intent", "port-change-intent", "domain-change-intent", "retired-cleanup-intent"):
             if self.prep._exists(name):
                 raise PreparationError("有其他未完成变更，保留现场。")
         spec, _keys, record = _read_deployment_snapshot(self.prep)
@@ -161,7 +161,8 @@ class TokenDiagnostic:
             snapshots[path] = self.tokens._snapshot(path, 0o600)
         if self.after_permission_fix:
             snapshots.update(self._previous_failure(intent, spec))
-        absent = [STATE + "/" + name + ".json" for name in ("key-rotation-intent", "port-change-intent", "domain-change-intent")]
+        absent = [STATE + "/" + name + ".json" for name in (
+            "key-rotation-intent", "port-change-intent", "domain-change-intent", "retired-cleanup-intent")]
         absent += [credential_path + ".snellctl-new", STATE + "/" + CURRENT + ".json.snellctl-new"]
         if not self.prep._exists(CURRENT):
             absent.append(STATE + "/" + CURRENT + ".json")
