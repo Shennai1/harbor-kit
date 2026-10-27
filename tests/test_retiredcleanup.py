@@ -1,8 +1,10 @@
 from contextlib import contextmanager, redirect_stderr, redirect_stdout
 import io
 import json
+import os
 import shutil
 import stat
+from types import SimpleNamespace
 import unittest
 from unittest.mock import Mock, patch
 
@@ -11,7 +13,9 @@ from snellctl.client import read_client, ClientError
 from snellctl.hostprep import CREDENTIAL, HostFiles, PreparationError, Reply, STATE
 from snellctl.installer import installation_status, render_status
 from snellctl.menu import run_menu
-from snellctl.retiredcleanup import CleanupPlan, INTENT, SUCCESS, RetiredCleanup, lineage_paths, run_retired_cleanup
+from snellctl.retiredcleanup import (CleanupPlan, INTENT, SUCCESS, RetiredCleanup, lineage_paths,
+                                    run_retired_cleanup, run_retired_cleanup_check)
+from snellctl.retiredplan import ScopeBlocked
 from test_hostprep import DOMAIN, TOKEN
 from test_installer import Console
 import test_domainchange
@@ -46,6 +50,7 @@ class RetiredCleanupTests(unittest.TestCase):
         self.enrich_renewals()
         self.engine = RetiredCleanup(self.fixture.tokens)
         self.host.calls.clear()
+        self.enterContext(self.linux_symlink_metadata())
 
     def clean(self, plan=None, **kwargs):
         return self.engine.clean(plan or self.engine.check(DOMAIN), confirm_ownership=True, confirm_delete=True, **kwargs)
@@ -75,6 +80,123 @@ class RetiredCleanupTests(unittest.TestCase):
         for value in (DOMAIN, plan.revision, TOKEN):
             self.assertNotIn(value, repr(plan))
         self.assertFalse(any(c.argv[0] == "certbot" for c in self.host.calls))
+
+    @contextmanager
+    def linux_symlink_metadata(self):
+        original = HostFiles.info
+        def info(files, path):
+            item = original(files, path)
+            if item is not None and stat.S_ISLNK(item.st_mode):
+                values = {name: getattr(item, name) for name in dir(item) if name.startswith("st_")}
+                values["st_mode"] = stat.S_IFLNK | 0o777
+                return SimpleNamespace(**values)
+            return item
+        with patch.object(HostFiles, "info", new=info):
+            yield
+
+    def test_linux_0777_certificate_links_are_not_writable_regular_files(self):
+        with self.linux_symlink_metadata():
+            plan = self.engine.check(DOMAIN)
+        self.assertEqual(plan.domain, DOMAIN)
+
+    def test_read_only_check_never_enters_cleanup_or_changes_state(self):
+        before = self.fixture.snapshot()
+        active, enabled, rules = set(self.host.active), set(self.host.enabled), list(self.host.rules)
+        with patch.object(self.engine, "clean", side_effect=AssertionError("delete")), \
+             patch.object(HostFiles, "write_new", side_effect=AssertionError("write")), \
+             patch.object(HostFiles, "unlink_owned", side_effect=AssertionError("unlink")):
+            report = self.engine.inspect_only(DOMAIN)
+        self.assertEqual(report["result"], "cleanup-check-passed-no-changes", report)
+        self.assertEqual(report["linux_style_live_links_checked"], 4)
+        for key in ("host_changes_attempted", "cleanup_authorized", "certbot_attempted",
+                    "renewal_pause_attempted", "report_saved"):
+            self.assertFalse(report[key])
+        self.assertEqual(self.fixture.snapshot(), before)
+        self.assertEqual((active, enabled, rules), (self.host.active, self.host.enabled, self.host.rules))
+        for command in self.host.calls:
+            self.assertNotEqual(command.argv[0], "certbot")
+            self.assertNotIn(command.argv[:2], {("systemctl", "disable"), ("systemctl", "enable"),
+                                             ("systemctl", "stop"), ("systemctl", "reload")})
+
+    def test_normal_file_writable_permissions_still_block(self):
+        path = "/etc/letsencrypt/accounts/sample/meta.json"
+        self.host.write(path, b"PRIVATE", 0o666)
+        report = self.engine.inspect_only(DOMAIN)
+        self.assertEqual(report["result"], "blocked-preserve-all", report)
+        self.assertEqual(report["failure_phase"], "preserved-resources-check")
+        self.assertEqual(report["reason"], "preserved-metadata")
+        self.assertNotIn("PRIVATE", json.dumps(report))
+        self.assertNotIn(path, json.dumps(report))
+
+    def test_directory_writable_permissions_still_block(self):
+        self.host.write("/etc/letsencrypt/accounts/sample/meta.json", b"fixture")
+        self.host.path("/etc/letsencrypt/accounts/sample").chmod(0o777)
+        report = self.engine.inspect_only(DOMAIN)
+        self.assertEqual(report["failure_phase"], "preserved-resources-check")
+        self.assertEqual(report["reason"], "preserved-metadata")
+
+    def test_live_symlink_wrong_owner_still_blocks(self):
+        original = HostFiles.info
+        path = "/etc/letsencrypt/live/" + test_domainchange.NEW_DOMAIN + "/cert.pem"
+        def info(files, name):
+            item = original(files, name)
+            if name == path:
+                item = SimpleNamespace(**vars(item))
+                item.st_uid += 1
+            return item
+        with patch.object(HostFiles, "info", new=info), self.assertRaises(ScopeBlocked) as raised:
+            self.engine._preserved_tree((*lineage_paths(DOMAIN), CREDENTIAL))
+        self.assertEqual(raised.exception.code, "preserved-owner")
+
+    def test_live_symlink_must_match_its_own_archive_and_file(self):
+        path = self.host.path("/etc/letsencrypt/live/" + test_domainchange.NEW_DOMAIN + "/cert.pem")
+        for destination in ("/outside/private", "../../archive/" + DOMAIN + "/cert1.pem",
+                            "../../archive/" + test_domainchange.NEW_DOMAIN + "/privkey1.pem"):
+            with self.subTest(destination=destination):
+                path.unlink()
+                path.symlink_to(destination)
+                with self.assertRaises(ScopeBlocked) as raised:
+                    self.engine._preserved_tree((*lineage_paths(DOMAIN), CREDENTIAL))
+                self.assertEqual(raised.exception.code, "preserved-symlink-target")
+
+    def test_unknown_live_symlink_and_account_symlink_still_block(self):
+        for path in ("/etc/letsencrypt/live/README", "/etc/letsencrypt/accounts/link"):
+            with self.subTest(path=path):
+                target = self.host.path(path)
+                target.parent.mkdir(parents=True, exist_ok=True)
+                target.symlink_to("/outside")
+                with self.assertRaises(ScopeBlocked) as raised:
+                    self.engine._preserved_tree((*lineage_paths(DOMAIN), CREDENTIAL))
+                self.assertEqual(raised.exception.code, "preserved-symlink")
+                target.unlink()
+
+    def test_symlink_target_permissions_and_hardlinks_remain_checked(self):
+        path = self.host.path("/etc/letsencrypt/archive/" + test_domainchange.NEW_DOMAIN + "/privkey1.pem")
+        path.chmod(0o644)
+        with self.assertRaises(ScopeBlocked) as raised:
+            self.engine._preserved_tree((*lineage_paths(DOMAIN), CREDENTIAL))
+        self.assertEqual(raised.exception.code, "preserved-symlink-target-metadata")
+        path.chmod(0o600)
+        os.link(path, path.parent / "extra-hardlink")
+        with self.assertRaises(ScopeBlocked) as raised:
+            self.engine._preserved_tree((*lineage_paths(DOMAIN), CREDENTIAL))
+        self.assertEqual(raised.exception.code, "preserved-symlink-target-metadata")
+
+    def test_read_only_error_reason_and_lock_phase_are_redacted(self):
+        with self.prep._lock():
+            report = self.engine.inspect_only(DOMAIN)
+        self.assertEqual(report["failure_phase"], "preparation-lock")
+        self.assertFalse(report["host_changes_attempted"])
+        with patch.object(self.engine, "_preserved_tree", side_effect=RuntimeError("PRIVATE-PATH")):
+            report = self.engine.inspect_only(DOMAIN)
+        self.assertEqual(report["failure_phase"], "preserved-resources-check")
+        self.assertNotIn("PRIVATE-PATH", json.dumps(report))
+
+    def test_read_only_interrupt_never_creates_pending_marker(self):
+        self.engine.progress = lambda phase: (_ for _ in ()).throw(KeyboardInterrupt()) if phase == "preserved-resources-check" else None
+        report = self.engine.inspect_only(DOMAIN)
+        self.assertEqual(report["reason"], "interrupted")
+        self.assertFalse(self.prep._exists(INTENT))
 
     def test_success_exact_scope_preserves_node_accounts_history_and_firewall(self):
         self.host.write("/etc/letsencrypt/accounts/test/account/private_key.json", b"ACCOUNT_SECRET")
@@ -425,3 +547,36 @@ class RetiredCleanupInterfaceTests(unittest.TestCase):
             with redirect_stderr(io.StringIO()) as output, self.assertRaises(SystemExit):
                 main(["clean-retired-domain", "--experimental", arg, "PRIVATE"])
             self.assertNotIn("PRIVATE", output.getvalue())
+
+    def test_preconfirmation_cleanup_failure_has_sanitized_phase_report(self):
+        self.engine.check.side_effect = ScopeBlocked("preserved-metadata")
+        self.engine._check_failure.return_value = {"failure_phase": "preserved-resources-check", "reason": "preserved-metadata"}
+        ui = Console([DOMAIN])
+        self.assertEqual(run_retired_cleanup(factory=self.factory, terminal=ui), 1)
+        self.assertIn('"host_changes_attempted": false', ui.text)
+        self.assertIn("preserved-resources-check", ui.text)
+        self.engine.clean.assert_not_called()
+
+    def test_read_only_interface_and_cli_cannot_dispatch_delete(self):
+        self.engine.inspect_only.return_value = {"result": "cleanup-check-passed-no-changes"}
+        ui = Console([DOMAIN, "y"])
+        self.assertEqual(run_retired_cleanup_check(factory=self.factory, terminal=ui), 0)
+        self.engine.inspect_only.assert_called_once_with(DOMAIN)
+        self.engine.clean.assert_not_called()
+        ui.secret.assert_not_called()
+        with patch("snellctl.retiredcleanup.run_retired_cleanup_check", return_value=0) as check, \
+             patch("snellctl.retiredcleanup.run_retired_cleanup") as clean:
+            self.assertEqual(main(["clean-retired-domain", "--check-only"]), 0)
+            check.assert_called_once_with()
+            clean.assert_not_called()
+            with redirect_stderr(io.StringIO()), self.assertRaises(SystemExit):
+                main(["clean-retired-domain", "--check-only", "--experimental"])
+
+    def test_read_only_cancel_and_no_tty_never_check_or_clean(self):
+        for answers, status in (([""], 130), ([DOMAIN, ""], 130), ([DOMAIN, "yes"], 130)):
+            self.assertEqual(run_retired_cleanup_check(factory=self.factory, terminal=Console(answers)), status)
+        ui = Console([DOMAIN, "y"])
+        ui.interactive = Mock(return_value=False)
+        self.assertEqual(run_retired_cleanup_check(factory=self.factory, terminal=ui), 2)
+        self.engine.inspect_only.assert_not_called()
+        self.engine.clean.assert_not_called()

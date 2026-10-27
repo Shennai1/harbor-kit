@@ -3,6 +3,8 @@
 from dataclasses import dataclass, field
 import json
 import os
+from pathlib import PurePosixPath
+import re
 import stat
 import time
 import uuid
@@ -12,7 +14,7 @@ from .deployment import NodeSpec
 from .domaininventory import BASE, ROOTS, Inventory
 from .hostprep import STATE, Command, PreparationError, Reply
 from .installer import Terminal, confirm
-from .retiredplan import RetiredPlan, _require
+from .retiredplan import PARTS, RetiredPlan, ScopeBlocked, _require
 from .tokenchange import CURRENT, _json_bytes, real_token_change
 
 
@@ -43,6 +45,7 @@ class RetiredCleanup:
         self.tokens, self.prep, self.files = tokens, tokens.prep, tokens.files
         self.progress, self.phase = progress, "not-started"
         self.scope = RetiredPlan(tokens, self._phase)
+        self.linux_style_live_links = 0
 
     def _phase(self, phase):
         self.phase = phase
@@ -52,6 +55,7 @@ class RetiredCleanup:
         """Bounded metadata only; no old Token, private key or ACME account reads."""
         inventory = Inventory(self.files)
         result = {}
+        self.linux_style_live_links = 0
 
         def visit(path, depth):
             if path in excluded:
@@ -61,7 +65,12 @@ class RetiredCleanup:
             if item is None:
                 result[path] = None
                 return
-            _require(item.st_uid == os.geteuid() and not item.st_mode & 0o022, "preserved-metadata")
+            _require(item.st_uid == os.geteuid(), "preserved-owner")
+            link = stat.S_ISLNK(item.st_mode)
+            # Linux symlink permission bits are always 0777 and are not access rights.
+            # Keep the owner, no-follow path and archive-target checks instead.
+            if not link:
+                _require(not item.st_mode & 0o022, "preserved-metadata")
             fingerprint = inventory.watched[path]
             # Removing a child legitimately changes shared directory size/times.
             if path in ROOTS.values():
@@ -72,9 +81,22 @@ class RetiredCleanup:
                 _require(state == "observed", "preserved-tree-incomplete")
                 for name in names:
                     visit(path + "/" + name, depth + 1)
-            elif stat.S_ISLNK(item.st_mode):
-                _require(path.startswith(ROOTS["live"] + "/"), "preserved-symlink")
-                result[path] = (fingerprint, self.files.readlink(path))
+            elif link:
+                relative = PurePosixPath(path).relative_to(BASE).parts
+                _require(len(relative) == 3 and relative[0] == "live"
+                         and relative[2] in {part + ".pem" for part in PARTS}, "preserved-symlink")
+                name, part = relative[1], relative[2][:-4]
+                NodeSpec(name)
+                destination = self.files.readlink(path)
+                match = re.fullmatch(r"\.\./\.\./archive/" + re.escape(name) + "/" + part
+                                     + r"([1-9][0-9]{0,9})\.pem", destination)
+                _require(match is not None, "preserved-symlink-target")
+                archive = ROOTS["archive"] + "/" + name + "/" + part + match[1] + ".pem"
+                _require(inventory.metadata(archive, "file", private=part == "privkey") == "observed",
+                         "preserved-symlink-target-metadata")
+                if stat.S_IMODE(item.st_mode) == 0o777:
+                    self.linux_style_live_links += 1
+                result[path] = (fingerprint, destination)
             else:
                 _require(stat.S_ISREG(item.st_mode) and item.st_nlink == 1, "preserved-file-type")
 
@@ -86,15 +108,37 @@ class RetiredCleanup:
     def _check(self, domain):
         data = self.scope.inspect_locked(domain)
         target, before, inventory, credential, counts, _history = data
+        self._phase("preserved-resources-check")
         preserved = self._preserved_tree((*lineage_paths(domain), credential))
+        self._phase("snapshot-recheck")
         inventory.recheck()
         revision = _digest(_json_bytes({"current": before[0].revision, "target": inventory.watched,
                                        "preserved": preserved}))
         return CleanupPlan(target.domain, revision, counts), data, preserved
 
     def check(self, domain):
+        self._phase("preparation-lock")
         with self.prep._lock():
             return self._check(domain)[0]
+
+    def _check_failure(self, error):
+        reason = (error.code if isinstance(error, ScopeBlocked) else "interrupted"
+                  if isinstance(error, (KeyboardInterrupt, EOFError)) else "unreadable-busy-unsupported-or-check-failed")
+        return {"failure_phase": self.phase, "reason": reason}
+
+    def inspect_only(self, domain):
+        report = {"format": 1, "operation": "retired-cleanup-check", "result": "blocked-preserve-all",
+                  "host_changes_attempted": False, "cleanup_authorized": False, "report_saved": False,
+                  "certbot_attempted": False, "renewal_pause_attempted": False,
+                  "current_service_health": "not-confirmed", "global_reference_check": "not-performed"}
+        try:
+            plan = self.check(domain)
+            report.update(result="cleanup-check-passed-no-changes", target_counts=plan.counts,
+                          current_service_health="local-checks-passed")
+        except (Exception, KeyboardInterrupt) as error:
+            report.update(self._check_failure(error))
+        report["linux_style_live_links_checked"] = self.linux_style_live_links
+        return report
 
     def _absent(self, paths):
         _require(all(self.files.info(path) is None for path in paths), "deleted-resources-still-present")
@@ -224,7 +268,14 @@ def run_retired_cleanup(*, factory=real_token_change, terminal=None):
         NodeSpec(domain)
         with factory() as tokens:
             engine = RetiredCleanup(tokens, lambda phase: ui.say("清理阶段：" + phase))
-            plan = engine.check(domain)
+            try:
+                plan = engine.check(domain)
+            except Exception as error:
+                ui.say(json.dumps({"format": 1, "operation": "retired-domain-cleanup",
+                                   "result": "precheck-failed", "host_changes_attempted": False,
+                                   **engine._check_failure(error)}, ensure_ascii=False, indent=2))
+                ui.say("停止于只读核查，尚未暂停续期或删除；保留现场，只分享脱敏 JSON。")
+                return 1
             ui.say(f"仅处理旧域名：{domain}；证书归档 {plan.counts['archive_generations']} 代，独立本机凭据 1 份。")
             ui.say("检查范围有限，历史记录不构成完整归属证明；不能替你排除其他站点、脚本、容器或任务的引用。")
             if not confirm(ui, "确认这些旧证书和本机凭据属于已淘汰的测试节点，且没有其他用途或消费者？"):
@@ -251,4 +302,34 @@ def run_retired_cleanup(*, factory=real_token_change, terminal=None):
         return 130
     except Exception:
         ui.say("未完成清理：输入、归属或现场核对未通过。保留现有文件和记录；原始异常未显示。")
+        return 1
+
+
+def run_retired_cleanup_check(*, factory=real_token_change, terminal=None):
+    ui = terminal if terminal is not None else Terminal()
+    if not ui.interactive():
+        ui.say("清理只读复核需要交互终端，不接受域名参数或自动确认。")
+        return 2
+    try:
+        ui.say("只读复核旧域名清理条件；没有删除入口，不暂停续期、不执行 Certbot、不修复权限。")
+        domain = ui.ask("本次复核的旧完整小写域名（留空取消）：").strip()
+        if not domain:
+            return 130
+        NodeSpec(domain)
+        ui.say(f"仅检查：{domain}。会读取现用受限配置作内存核验及检查本机 TLS；不显示秘密。")
+        if not confirm(ui, "确认只读复核，不执行删除？"):
+            return 130
+        if not ui.interactive():
+            return 2
+        with factory() as tokens:
+            engine = RetiredCleanup(tokens, lambda phase: ui.say("只读核查阶段：" + phase))
+            report = engine.inspect_only(domain)
+        ui.say(json.dumps(report, ensure_ascii=False, indent=2))
+        ui.say("本次没有执行清理或更改续期状态，通过也不授权删除。只分享最后 JSON。")
+        return 0 if report["result"] == "cleanup-check-passed-no-changes" else 1
+    except (KeyboardInterrupt, EOFError):
+        ui.say("已取消只读复核；未执行删除或续期变更。")
+        return 130
+    except Exception:
+        ui.say("未完成只读复核；输入或环境不符合要求，原始异常未显示。未执行删除或续期变更。")
         return 1

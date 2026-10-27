@@ -60,7 +60,9 @@ def main(argv: list[str] | None = None) -> int:
     inventory.add_argument("--json", action="store_true", help="输出匿名引用报告，不保存文件")
     commands.add_parser("retired-domain-plan", help="交互核查一个旧域名的资源范围及现用节点健康；不清理")
     retired_cleanup = commands.add_parser("clean-retired-domain", help="实验版：确认后删除单个旧域名的本机证书、续期配置和独立凭据")
-    retired_cleanup.add_argument("--experimental", action="store_true", help="开启不可撤销的受限清理，仍需交互确认")
+    retired_mode = retired_cleanup.add_mutually_exclusive_group()
+    retired_mode.add_argument("--experimental", action="store_true", help="开启不可撤销的受限清理，仍需交互确认")
+    retired_mode.add_argument("--check-only", action="store_true", help="只读复核清理条件并输出脱敏结果，不删除或暂停续期")
     plan = commands.add_parser("plan", help="离线预览部署计划，不读取或更改当前机器")
     _spec_arguments(plan)
     plan.add_argument("--json", action="store_true", help="输出不含密钥的计划 JSON")
@@ -86,6 +88,9 @@ def main(argv: list[str] | None = None) -> int:
             command.add_argument("--action", required=True, choices=("resume", "rollback"))
     args = parser.parse_args(argv)
     if args.command == "clean-retired-domain":
+        if args.check_only:
+            from .retiredcleanup import run_retired_cleanup_check
+            return run_retired_cleanup_check()
         if not args.experimental:
             print("旧域名清理需要 --experimental，仍需分别确认归属和本机删除。", file=sys.stderr)
             return 2

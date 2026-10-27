@@ -10,6 +10,18 @@ python3 -E -s -B -m snellctl clean-retired-domain --experimental
 也可从实验菜单 14 进入；普通菜单不提供删除操作。没有自动确认、域名或目录命令行参数。
 不会安装常驻管理命令或修改快捷入口。
 
+清理确认前的只读复核：
+
+```bash
+python3 -E -s -B -m snellctl clean-retired-domain --check-only
+```
+
+此模式与 `--experimental` 互斥，不提供删除入口，不暂停续期、不执行 Certbot、不修复权限，
+不保存新状态或诊断日志。输入同一个旧完整域名并确认只读检查后，输出脱敏阶段、原因和结果。
+现用受限配置只用于内存校验；本机 TLS 检查及临时命令输出仍可能产生常规日志，不声称文件系统零写入。
+`cleanup-check-passed-no-changes` 只表示本轮完整清理前检查通过，不授权删除。
+`linux_style_live_links_checked` 仅是本轮保留范围中按 Linux 0777 形式检查的合法证书链接数，不含域名或路径。
+
 ## 确认范围
 
 输入真实旧完整小写域名。现用域名、匿名报告编号、未知或缺失资源均拒绝。
@@ -66,3 +78,13 @@ python3 -E -s -B -m snellctl clean-retired-domain --experimental
 自动测试使用临时文件系统和系统服务/Certbot 模拟器，不直接访问 VPS、Cloudflare 或 ACME。
 删除边界依据 [Certbot 安全删除说明](https://eff-certbot.readthedocs.io/en/stable/using.html#safely-deleting-certificates)
 及 [Certbot 4.0 存储实现](https://github.com/certbot/certbot/blob/v4.0.0/certbot/certbot/_internal/storage.py)。
+
+## 当前实测与修正
+
+首轮实测停在两次删除确认之前；没有进入续期暂停或删除阶段，不能记作清理成功。
+代码随后复现了 Linux 符号链接权限误判：保留资源遍历把链接的 0777 当作普通文件的可写权限。
+Linux 普通符号链接的权限位恒为 0777，且不用于访问检查，见 [Linux symlink(7)](https://man7.org/linux/man-pages/man7/symlink.7.html)。
+修正只针对证书 live 链接：继续校验所有者、固定文件名、同证书组 archive 目标及目标文件权限，
+不跟随任意链接；普通文件/目录的可写权限限制不变。
+新增 Linux 链接元数据语义的回归测试及独立只读复核。该模拟不等于 Linux 整机验收；
+等待目标 VPS 的只读反馈后再决定正式删除，不因修复而自动重跑。
