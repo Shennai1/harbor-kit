@@ -28,6 +28,7 @@ def run_menu(*, experimental=False) -> int:
                 print("10. 更换 Cloudflare Token（会暂停续期并执行 DNS 演练）")
                 print("11. 更换域名和证书（需新区域令牌及更新客户端 SNI）")
             print("12. 域名资源只读盘点（不清理）")
+            print("13. 旧域名清理预检查（需确认目标，不删除）")
             print("0. 退出")
             choice = input("选择：").strip()
             if choice == "0":
@@ -81,6 +82,9 @@ def run_menu(*, experimental=False) -> int:
             elif choice == "12":
                 from .domaininventory import collect as inventory_collect, render as inventory_render
                 print(inventory_render(inventory_collect()))
+            elif choice == "13":
+                from .retiredplan import run_retired_plan
+                run_retired_plan()
             else:
                 print("请选择菜单中已有的编号。")
     except (EOFError, KeyboardInterrupt):

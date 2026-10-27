@@ -211,14 +211,25 @@ def _collect(prep, report):
     report["state"] = "review-required" if not inventory.issues else "partial-preserve-all"
 
 
-def collect(*, root=Path("/"), system=None, euid=None):
-    report = {
+def _empty_report():
+    return {
         "format": 1, "mode": "read-only-domain-inventory", "scope": "managed-main",
         "state": "unsupported", "collection_complete": False, "cleanup_authorized": False,
         "managed_configuration": "not-checked", "current_service_health": "not-checked",
         "global_reference_check": "not-performed", "directories": {}, "lineages": [],
         "credentials": [], "findings": [], "limitations": list(LIMITATIONS),
     }
+
+
+def collect_locked(prep):
+    """Internal collector; caller must hold the preparation lock."""
+    report = _empty_report()
+    _collect(prep, report)
+    return report
+
+
+def collect(*, root=Path("/"), system=None, euid=None):
+    report = _empty_report()
     if (platform.system() if system is None else system) != "Linux":
         return report
     if (os.geteuid() if euid is None else euid) != 0:

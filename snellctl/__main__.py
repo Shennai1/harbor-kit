@@ -58,6 +58,7 @@ def main(argv: list[str] | None = None) -> int:
     cleanup.add_argument("--json", action="store_true", help="输出脱敏报告，不自动保存文件")
     inventory = commands.add_parser("domain-inventory", help="只读盘点现用及保留证书的凭据引用；不清理")
     inventory.add_argument("--json", action="store_true", help="输出匿名引用报告，不保存文件")
+    commands.add_parser("retired-domain-plan", help="交互核查一个旧域名的资源范围及现用节点健康；不清理")
     plan = commands.add_parser("plan", help="离线预览部署计划，不读取或更改当前机器")
     _spec_arguments(plan)
     plan.add_argument("--json", action="store_true", help="输出不含密钥的计划 JSON")
@@ -82,6 +83,9 @@ def main(argv: list[str] | None = None) -> int:
         elif action == "recover":
             command.add_argument("--action", required=True, choices=("resume", "rollback"))
     args = parser.parse_args(argv)
+    if args.command == "retired-domain-plan":
+        from .retiredplan import run_retired_plan
+        return run_retired_plan()
     if args.command == "domain-inventory":
         from .domaininventory import collect as inventory_collect, exit_code, render as inventory_render
         report = inventory_collect()
