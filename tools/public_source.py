@@ -20,13 +20,13 @@ PUBLIC_FILES = (
     "snellctl/artifacts.py", "snellctl/cleanup.py", "snellctl/client.py",
     "snellctl/deployment.py", "snellctl/doctor.py", "snellctl/domainchange.py", "snellctl/domaininventory.py", "snellctl/hostcommands.py",
     "snellctl/hostprep.py", "snellctl/installer.py", "snellctl/menu.py",
-    "snellctl/portchange.py", "snellctl/preflight.py", "snellctl/publish.py", "snellctl/retiredplan.py", "snellctl/retiredcleanup.py", "snellctl/retiredrenewal.py", "snellctl/rotation.py", "snellctl/sandbox_cli.py",
+    "snellctl/portchange.py", "snellctl/preflight.py", "snellctl/publish.py", "snellctl/retiredplan.py", "snellctl/retiredcleanup.py", "snellctl/retiredrenewal.py", "snellctl/retiredcancel.py", "snellctl/rotation.py", "snellctl/sandbox_cli.py",
     "snellctl/storage.py", "snellctl/tlsprobe.py", "snellctl/tokenchange.py", "snellctl/tokendiag.py", "snellctl/tokenresume.py",
     "tests/fixtures/tls-test.cnf", "tests/test_activation.py", "tests/test_artifacts.py",
     "tests/test_cleanup.py", "tests/test_cli.py", "tests/test_client.py", "tests/test_confirmation.py",
     "tests/test_deployment.py", "tests/test_doctor.py", "tests/test_domainchange.py", "tests/test_domaininventory.py", "tests/test_hostcommands.py",
     "tests/test_hostprep.py", "tests/test_installer.py", "tests/test_preflight.py",
-    "tests/test_portchange.py", "tests/test_public_source.py", "tests/test_publish.py", "tests/test_retiredplan.py", "tests/test_retiredcleanup.py", "tests/test_retiredrenewal.py", "tests/test_resume.py", "tests/test_rotation.py", "tests/test_storage.py",
+    "tests/test_portchange.py", "tests/test_public_source.py", "tests/test_publish.py", "tests/test_retiredplan.py", "tests/test_retiredcleanup.py", "tests/test_retiredrenewal.py", "tests/test_retiredcancel.py", "tests/test_resume.py", "tests/test_rotation.py", "tests/test_storage.py",
     "tests/test_tlsprobe.py", "tests/test_tokenchange.py", "tests/test_tokendiag.py", "tests/test_tokenresume.py", "docs/token-change.md", "tools/public_source.py",
 )
 SENSITIVE = (

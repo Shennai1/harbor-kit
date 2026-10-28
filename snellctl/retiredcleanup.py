@@ -3,7 +3,7 @@
 from dataclasses import dataclass, field
 import json
 import os
-from pathlib import PurePosixPath
+from pathlib import Path, PurePosixPath
 import re
 import stat
 import time
@@ -124,7 +124,25 @@ class RetiredCleanup:
     def _check_failure(self, error):
         reason = (error.code if isinstance(error, ScopeBlocked) else "interrupted"
                   if isinstance(error, (KeyboardInterrupt, EOFError)) else "unreadable-busy-unsupported-or-check-failed")
-        return {"failure_phase": self.phase, "reason": reason}
+        result = {"failure_phase": self.phase, "reason": reason}
+        trace = error.__traceback__
+        while trace is not None:
+            source = Path(trace.tb_frame.f_code.co_filename)
+            if source.parent == Path(__file__).parent and re.fullmatch(r"[a-z_]+\.py", source.name):
+                result["failure_location"] = {"module": source.name, "line": trace.tb_lineno}
+            trace = trace.tb_next
+        if isinstance(error, OSError):
+            result["failure_category"] = "os-error"
+            if type(error.errno) is int:
+                result["errno"] = error.errno
+        return result
+
+    def _timer_command(self, report, key, action):
+        report[key] = {"attempted": True, "exit_code": None, "execution_uncertain": True}
+        reply = self.prep.runner(Command(("systemctl", action, "--now", "certbot.timer")))
+        _require(isinstance(reply, Reply), "timer-command-result-unrecognized")
+        report[key].update(exit_code=reply.code, execution_uncertain=reply.uncertain)
+        _require(reply.code == 0 and not reply.uncertain, "timer-command-failed-or-uncertain")
 
     def inspect_only(self, domain):
         report = {"format": 1, "operation": "retired-cleanup-check", "result": "blocked-preserve-all",
@@ -188,7 +206,8 @@ class RetiredCleanup:
                 self.files.private_directory_new(directory)
                 self._phase("renewal-pause")
                 timer_attempted = True
-                self.prep._run(["systemctl", "disable", "--now", "certbot.timer"])
+                self._timer_command(report, "pause_command", "disable")
+                self._phase("renewal-pause-check")
                 self._health(before, paused=True)
                 self._phase("before-delete-recheck")
                 self.scope._references(inventory, target, credential)
@@ -223,7 +242,7 @@ class RetiredCleanup:
                 report["preserved_scope_verified_before_enable"] = True
                 self._phase("renewal-enable")
                 self.tokens._expect(STATE + "/" + INTENT + ".json", marker, 0o600)
-                self.prep._run(["systemctl", "enable", "--now", "certbot.timer"])
+                self._timer_command(report, "enable_command", "enable")
                 self._phase("enabled-postcheck")
                 self._health(before, paused=False)
                 self._absent((*paths, credential))
@@ -232,18 +251,22 @@ class RetiredCleanup:
                 self.files.unlink_owned(STATE + "/" + INTENT + ".json", marker["identity"])
                 report.update(result=SUCCESS, current_service_health="local-checks-passed",
                               renewal_restored_verified=True)
-            except BaseException:
-                report["failure_phase"] = self.phase
+            except BaseException as error:
+                report.update(self._check_failure(error))
                 # Never repeat deletion or stop an in-progress Certbot service.
                 if timer_attempted:
+                    fallback_phase = "fallback-intent-check"
                     try:
                         if not self.prep._exists(INTENT):
                             self.prep._record(INTENT, intent)
-                        self.prep._run(["systemctl", "disable", "--now", "certbot.timer"])
+                        fallback_phase = "fallback-pause-command"
+                        self._timer_command(report, "fallback_pause_command", "disable")
+                        fallback_phase = "fallback-pause-check"
                         self.tokens._paused()
                         report["renewal_paused_verified_after"] = True
-                    except BaseException:
-                        pass
+                    except BaseException as fallback_error:
+                        report["fallback_pause_failure"] = {**self._check_failure(fallback_error),
+                                                            "failure_phase": fallback_phase}
             finally:
                 report["elapsed_seconds"] = int(time.monotonic() - started)
                 try:

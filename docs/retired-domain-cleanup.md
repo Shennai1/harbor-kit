@@ -61,7 +61,11 @@ python3 -E -s -B -m snellctl clean-retired-domain --check-only
 `retired-domain-cleaned`、两个 `*_removed_verified=true`、`renewal_restored_verified=true`，
 且 `current_service_health=local-checks-passed` 表示本轮删除和本机验收完成，不代表公网或真实续期已测。
 
-失败给出 `failure_phase`。可能已经删除部分证书，甚至旧资源全部删除但续期恢复未确认。
+失败给出 `failure_phase`。新版区分 `renewal-pause`（暂停命令）与 `renewal-pause-check`（暂停后的健康核查），
+记录 `pause_command` / `enable_command` 的退出码和不确定标志；失败保留分开的 `fallback_pause_command` 结果。
+`reason` 及可用时的 `failure_location` 只给固定原因和项目模块/行号，不输出异常文本、完整命令或秘密。
+系统错误可带数值 `errno`。这些诊断不会放松检查，也不能还原旧版本已丢失的失败信息。
+可能已经删除部分证书，甚至旧资源全部删除但续期恢复未确认。
 进入续期操作后失败会尝试保持定时器禁用，不重复删除、不中止现用节点或进行回退。
 `renewal_paused_verified_after=false` 在失败报告中表示未确认暂停，不可当成“续期正常”。
 
@@ -116,4 +120,36 @@ python3 -E -s -B -m snellctl restore-retired-renewal --experimental
 已有恢复尝试/报告、删除可能已开始、旧资源缺失或现场不符时均拒绝，不是通用恢复器。
 启用失败或结果不确定时，不自动重试，也不反向停用可能已经恢复的定时器，需核查实际状态。
 `report_saved=false` 需要保留终端输出；不能靠重复执行补报告。
-此入口已有模拟测试，仍需独立实机验收；不把恢复续期标记为根因已修复或删除已验收。
+此入口已有模拟测试，并取得一次用户实机恢复通过反馈：续期已恢复、现用本机健康正常、旧资源未变，
+清理仍待核查。不把恢复续期标记为根因已修复、真实到期续签或删除已验收。
+
+## 取消已恢复续期的失败清理
+
+```bash
+python3 -E -s -B -m snellctl cancel-retired-cleanup --experimental
+```
+
+仅接受删除前在暂停阶段停止、从未尝试删除且已有成功续期恢复记录的现场。
+这不是继续清理或通用取消：可能发生过删除、记录缺失、其他变更待处理、旧资源不完整、
+定时器未实际启用或现用配置/本机健康不符时，均不解除阻断。
+不接收域名/路径/秘密参数，确认默认 n；不安装快捷入口。
+
+核查原意图、失败报告、恢复尝试及结果，以及现用受管健康和旧资源。
+确认前后重新比较现场；旧 Token/私钥只检查元数据，现用秘密仅用于内存核验，不显示内容。
+在原私有日志目录先保存原标记的逐字节副本 `cancelled-cleanup-intent.json`，
+再保存 `cleanup-cancel-started.json`。再次核对历史、旧资源和当前续期后，才移除原活动意图。
+原失败/恢复记录不覆盖，最终另存 `cleanup-cancel-report.json`；新增文件权限 0600。
+
+不调用 Certbot，不启停或重载服务，不修改证书、凭据、节点、SSH/UFW、DNS 或云端 Token。
+现用自动续期保持启用，允许其合法轮换证书；常规本机健康请求可能产生服务日志。
+取消仅解除本次失败尝试的管理阻断，不授权新的删除，历史关联也不是完整资源归属证明。
+
+成功为 `cleanup-cancelled-resources-preserved`，`active_intent_removed_verified=true`、
+`cleanup_still_pending=false`、`old_resources_preserved_verified=true`，但 `cleanup_completed=false`。
+服务健康检查在最后移除标记前执行；整个操作不改变服务。无需修改客户端或重启。
+
+中断或失败不自动重试。归档/尝试存在但活动标记仍在时，继续阻止管理变更；
+标记可能已移除但落盘或最终报告失败，因此 `cleanup_still_pending` 依据现场返回 true、false 或 `not-confirmed`。
+最终报告失败时保留终端 JSON；已归档的原标记和取消授权记录仍在，不靠重跑补报告。
+这是分步骤写入，不保证跨文件原子提交；管理员应核对活动标记和历史文件，而非手动删标记或恢复过时状态。
+取消入口已有本地故障模拟测试，尚待实机验收。原暂停失败的根因仍未确定，不自动安排新的删除。

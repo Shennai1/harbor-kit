@@ -35,7 +35,7 @@ class RetiredRenewal:
         self.phase = phase
         self.progress(phase)
 
-    def _check(self):
+    def _check(self, *, restored=False):
         self._phase("pending-cleanup-records")
         for name in ("key-rotation-intent", "port-change-intent", "token-change-intent", "domain-change-intent"):
             _require(not self.prep._exists(name), "other-change-pending")
@@ -56,21 +56,48 @@ class RetiredRenewal:
                  "cleanup-log-path")
         inventory = Inventory(self.files)
         names, state = inventory.scan(directory, private=True)
-        _require(state == "observed" and names == ["report.json"], "cleanup-logs-or-restore-already-started")
+        expected = sorted(["report.json", STARTED, REPORT] if restored else ["report.json"])
+        _require(state == "observed" and names == expected, "cleanup-logs-or-restore-already-started")
         report_path = directory + "/report.json"
         snapshots[report_path] = self.tokens._snapshot(report_path, 0o600)
         failed = json.loads(self.files.read(report_path, mode=0o600))
         _require(isinstance(failed, dict) and type(failed.get("format")) is int and failed["format"] == 1
                  and failed.get("operation") == "retired-domain-cleanup" and failed.get("result") == "stopped"
-                 and failed.get("failure_phase") == "renewal-pause" and "certbot" not in failed,
+                 and failed.get("failure_phase") in {"renewal-pause", "renewal-pause-check"} and "certbot" not in failed,
                  "not-supported-pre-delete-stop")
         _require(all(failed.get(k) is True for k in ("host_changes_attempted", "report_saved", "operator_confirmed_ownership"))
                  and all(failed.get(k) is False for k in ("certbot_delete_attempted", "certificate_removed_verified",
                     "credential_delete_attempted", "credential_removed_verified", "renewal_restored_verified",
                     "automatic_retry")), "deletion-or-restore-not-excluded")
 
-        self._phase("paused-current-deployment")
-        self.tokens._paused()
+        if restored:
+            self._phase("restoration-success-records")
+            for name in (STARTED, REPORT):
+                snapshots[directory + "/" + name] = self.tokens._snapshot(directory + "/" + name, 0o600)
+            started = json.loads(self.files.read(directory + "/" + STARTED, mode=0o600))
+            result = json.loads(self.files.read(directory + "/" + REPORT, mode=0o600))
+            _require(isinstance(started, dict) and set(started) == {"format", "operation", "revision"}
+                     and type(started["format"]) is int and started["format"] == 1
+                     and started["operation"] == "retired-cleanup-renewal-restore"
+                     and isinstance(started["revision"], str) and re.fullmatch(r"[a-f0-9]{64}", started["revision"]),
+                     "restore-attempt-record-invalid")
+            _require(isinstance(result, dict) and type(result.get("format")) is int and result["format"] == 1
+                     and result.get("operation") == started["operation"] and result.get("result") == SUCCESS
+                     and result.get("current_service_health") == "local-checks-passed"
+                     and all(result.get(k) is True for k in ("host_changes_attempted", "renewal_enable_attempted",
+                         "renewal_restored_verified", "old_resources_unchanged_verified", "cleanup_still_pending", "report_saved"))
+                     and all(result.get(k) is False for k in ("cleanup_completed", "automatic_retry"))
+                     and result.get("enable_command") == {"exit_code": 0, "execution_uncertain": False},
+                     "restoration-not-confirmed")
+            _require(type(result["enable_command"]["exit_code"]) is int
+                     and result["enable_command"]["execution_uncertain"] is False,
+                     "restoration-command-types")
+
+        self._phase("enabled-current-deployment" if restored else "paused-current-deployment")
+        if restored:
+            self.tokens._idle()
+        else:
+            self.tokens._paused()
         spec, _keys, record = _read_deployment_snapshot(self.prep)
         spec = self.tokens.local._version(spec)
         _require(target.domain != spec.domain and record["binding"] == _binding(spec), "current-deployment-binding")
@@ -88,7 +115,7 @@ class RetiredRenewal:
             snapshots[path] = self.tokens._snapshot(path, 0o600)
         unchanged = {"records": snapshots, "lineage": self.tokens._lineage(spec)}
         before = (None, spec, record, credential, current, unchanged)
-        self.cleanup._health(before, paused=True)
+        self.cleanup._health(before, paused=not restored)
 
         self._phase("old-resources-still-present")
         old = Inventory(self.files)
@@ -98,7 +125,7 @@ class RetiredRenewal:
                  and all(type(x) is int for x in intent["credential_metadata"])
                  and tuple(intent["credential_metadata"]) == old.watched[old_path], "old-credential-metadata-changed")
         self._phase("confirmation-snapshot")
-        self.cleanup._health(before, paused=True)
+        self.cleanup._health(before, paused=not restored)
         inventory.recheck()
         old.recheck()
         revision = _digest(_json_bytes({"before": before[2:], "directory": inventory.watched, "old": old.watched}))

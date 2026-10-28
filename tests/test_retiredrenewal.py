@@ -24,7 +24,7 @@ class RetiredRenewalTests(unittest.TestCase):
         self.fixture.setUp()
         with patch.object(self.fixture.engine, '_health', side_effect=PreparationError('fixture stop')):
             result = self.fixture.clean()
-        self.assertEqual(result['failure_phase'], 'renewal-pause')
+        self.assertEqual(result['failure_phase'], 'renewal-pause-check')
         self.assertFalse(result['certbot_delete_attempted'])
         self.tokens = self.fixture.fixture.tokens
         self.host, self.prep = self.fixture.host, self.fixture.prep

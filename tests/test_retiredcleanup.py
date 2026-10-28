@@ -301,7 +301,7 @@ class RetiredCleanupTests(unittest.TestCase):
                 self.host.local_override = lambda c: Reply(0, "ActiveState=active\nSubState=running\nMainPID=123\nJob=\n") if c.argv[-1] == "ActiveState,SubState,MainPID,Job" else None
         self.engine.progress = progress
         report = self.clean()
-        self.assert_stopped(report, "renewal-pause")
+        self.assert_stopped(report, "renewal-pause-check")
         self.assertFalse(report["certbot_delete_attempted"])
         self.assertFalse(any(c.argv[:2] == ("systemctl", "stop") for c in self.host.calls))
 
@@ -422,6 +422,30 @@ class RetiredCleanupTests(unittest.TestCase):
         self.assert_stopped(report, "renewal-pause")
         self.assertFalse(report["certbot_delete_attempted"])
         self.assertFalse(report["renewal_paused_verified_after"])
+        expected = {"attempted": True, "exit_code": 1, "execution_uncertain": False}
+        self.assertEqual(report["pause_command"], expected)
+        self.assertEqual(report["fallback_pause_command"], expected)
+        self.assertEqual(report["fallback_pause_failure"]["failure_phase"], "fallback-pause-command")
+        self.assertEqual(report["reason"], "timer-command-failed-or-uncertain")
+        self.assertEqual(report["failure_location"]["module"], "retiredplan.py")
+
+    def test_pause_postcheck_failure_preserves_original_and_fallback_diagnostics(self):
+        with patch.object(self.engine, "_health", side_effect=PreparationError("PRIVATE cause")):
+            report = self.clean()
+        self.assert_stopped(report, "renewal-pause-check")
+        self.assertEqual(report["pause_command"], {"attempted": True, "exit_code": 0, "execution_uncertain": False})
+        self.assertEqual(report["fallback_pause_command"], report["pause_command"])
+        self.assertTrue(report["renewal_paused_verified_after"])
+        self.assertNotIn("PRIVATE", json.dumps(report))
+        self.assertNotIn("/Users/", json.dumps(report))
+
+    def test_uncertain_pause_never_reaches_delete(self):
+        self.host.local_override = lambda c: Reply(0, "PRIVATE", uncertain=True) if c.argv == ("systemctl", "disable", "--now", "certbot.timer") else None
+        report = self.clean()
+        self.assert_stopped(report, "renewal-pause")
+        self.assertTrue(report["pause_command"]["execution_uncertain"])
+        self.assertFalse(report["certbot_delete_attempted"])
+        self.assertNotIn("PRIVATE", json.dumps(report))
 
     def test_delete_output_capture_failure_does_not_delete_credential(self):
         original = HostFiles.write_new
