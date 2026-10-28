@@ -63,6 +63,8 @@ def main(argv: list[str] | None = None) -> int:
     retired_mode = retired_cleanup.add_mutually_exclusive_group()
     retired_mode.add_argument("--experimental", action="store_true", help="开启不可撤销的受限清理，仍需交互确认")
     retired_mode.add_argument("--check-only", action="store_true", help="只读复核清理条件并输出脱敏结果，不删除或暂停续期")
+    retired_renewal = commands.add_parser("restore-retired-renewal", help="受限恢复旧域名清理删除前停止后的自动续期；保留资源和标记")
+    retired_renewal.add_argument("--experimental", action="store_true", help="允许受限续期恢复，仍需现场核查和交互确认")
     plan = commands.add_parser("plan", help="离线预览部署计划，不读取或更改当前机器")
     _spec_arguments(plan)
     plan.add_argument("--json", action="store_true", help="输出不含密钥的计划 JSON")
@@ -87,6 +89,12 @@ def main(argv: list[str] | None = None) -> int:
         elif action == "recover":
             command.add_argument("--action", required=True, choices=("resume", "rollback"))
     args = parser.parse_args(argv)
+    if args.command == "restore-retired-renewal":
+        if not args.experimental:
+            print("受限恢复需要 --experimental，仍须核查及确认；不继续清理。", file=sys.stderr)
+            return 2
+        from .retiredrenewal import run_retired_renewal
+        return run_retired_renewal()
     if args.command == "clean-retired-domain":
         if args.check_only:
             from .retiredcleanup import run_retired_cleanup_check
