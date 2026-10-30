@@ -12,7 +12,8 @@ from snellctl.installer import installation_status, render_status
 from snellctl.menu import run_menu
 from snellctl.portchange import PortChange
 from snellctl.rotation import KeyRotation
-from snellctl.tokenchange import CANDIDATE, CURRENT, INTENT, UNCHANGED_RECORDS, TokenChange, TokenPlan, run_token_change
+from snellctl.tokenchange import (CANDIDATE, CURRENT, INTENT, UNCHANGED_RECORDS, RenewalStateMismatch,
+                                 TokenChange, TokenPlan, run_token_change)
 from test_hostprep import DOMAIN, TOKEN
 from test_installer import Console
 from test_portchange import PortHost
@@ -27,6 +28,117 @@ def success_output():
     return (f"dns-01 challenge for {DOMAIN}\nWaiting 60 seconds for DNS changes to propagate\n"
             "Hook 'deploy-hook' ran with output:\n snellctl: nginx reload command succeeded\n"
             f"  /etc/letsencrypt/live/{DOMAIN}/fullchain.pem (success)\n")
+
+
+class RenewalStateEvidenceTests(unittest.TestCase):
+    def setUp(self):
+        self.idle = {"ActiveState": "inactive", "SubState": "dead", "MainPID": "0", "Job": ""}
+        self.paused = {"ActiveState": "inactive", "SubState": "dead", "UnitFileState": "disabled"}
+        self.public = Mock()
+        self.tokens = TokenChange(self.public)
+
+    def mismatch(self, fields):
+        self.public._fields.return_value = fields
+        with self.assertRaises(RenewalStateMismatch) as caught:
+            self.tokens._idle()
+        self.public._fields.assert_called_once_with("certbot.service", "ActiveState,SubState,MainPID,Job")
+        return caught.exception
+
+    def test_exact_idle_passes_with_one_unchanged_query(self):
+        self.public._fields.return_value = dict(reversed(list(self.idle.items())))
+        self.tokens._idle()
+        self.public._fields.assert_called_once_with("certbot.service", "ActiveState,SubState,MainPID,Job")
+
+    def test_missing_job_is_not_reported_as_empty_or_busy(self):
+        fields = {key: value for key, value in self.idle.items() if key != "Job"}
+        evidence = self.mismatch(fields).evidence
+        self.assertEqual(evidence["missing_fields"], ["Job"])
+        self.assertEqual(evidence["mismatched_fields"], [])
+        self.assertNotIn("Job", evidence["observed"])
+        self.assertEqual(evidence["source"], "failed-comparison")
+
+    def test_extra_field_still_blocks_without_exposing_its_name_or_value(self):
+        evidence = self.mismatch({**self.idle, "SECRET-NAME": "SECRET-VALUE"}).evidence
+        self.assertTrue(evidence["unexpected_fields_present"])
+        self.assertEqual(evidence["missing_fields"], [])
+        self.assertEqual(evidence["mismatched_fields"], [])
+        self.assertEqual(evidence["observed"], self.idle)
+        self.assertNotIn("SECRET", json.dumps(evidence))
+
+    def test_active_service_observation_is_copied_not_requeried(self):
+        fields = {**self.idle, "ActiveState": "active", "SubState": "running", "MainPID": "123"}
+        evidence = self.mismatch(fields).evidence
+        fields.update(self.idle)
+        self.assertEqual(evidence["observed"]["MainPID"], "123")
+        self.assertEqual(evidence["expected"], self.idle)
+        self.assertEqual(evidence["mismatched_fields"], ["ActiveState", "MainPID", "SubState"])
+        self.assertEqual(self.public._fields.call_count, 1)
+
+    def test_nonempty_job_is_redacted_not_assumed_to_be_a_valid_job_id(self):
+        evidence = self.mismatch({**self.idle, "Job": "PRIVATE-JOB-PATH"}).evidence
+        self.assertEqual(evidence["observed"]["Job"], "[nonempty-redacted]")
+        self.assertEqual(evidence["mismatched_fields"], ["Job"])
+        self.assertNotIn("PRIVATE", json.dumps(evidence))
+
+    def test_unknown_states_control_characters_and_oversized_pid_are_redacted(self):
+        fields = {"ActiveState": "SECRET\x1b[31m", "SubState": "SECRET\nPRIVATE",
+                  "MainPID": "9" * 10000, "Job": "SECRET"}
+        error = self.mismatch(fields)
+        text = json.dumps(error.evidence) + repr(error)
+        self.assertNotIn("SECRET", text)
+        self.assertNotIn("PRIVATE", text)
+        self.assertNotIn("999999", text)
+        self.assertLess(len(text), 1500)
+
+    def test_non_string_values_are_not_rendered(self):
+        evidence = self.mismatch({key: {"SECRET": "PRIVATE"} for key in self.idle}).evidence
+        self.assertTrue(all(value == "[unrecognized-redacted]" for value in evidence["observed"].values()))
+        self.assertNotIn("SECRET", json.dumps(evidence))
+
+    def test_empty_output_reports_all_missing_fields(self):
+        evidence = self.mismatch({}).evidence
+        self.assertEqual(evidence["missing_fields"], sorted(self.idle))
+        self.assertEqual(evidence["observed"], {})
+
+    def test_present_but_empty_values_are_distinct_from_missing_or_unknown(self):
+        evidence = self.mismatch(dict.fromkeys(self.idle, "")).evidence
+        self.assertEqual(evidence["missing_fields"], [])
+        self.assertEqual(evidence["observed"], dict.fromkeys(self.idle, ""))
+        self.assertEqual(evidence["mismatched_fields"], ["ActiveState", "MainPID", "SubState"])
+
+    def test_known_failed_and_transition_states_do_not_pass(self):
+        for active, substate in (("failed", "failed"), ("activating", "start"), ("deactivating", "stop")):
+            with self.subTest(active=active):
+                self.public.reset_mock()
+                evidence = self.mismatch({**self.idle, "ActiveState": active, "SubState": substate}).evidence
+                self.assertEqual(evidence["observed"]["ActiveState"], active)
+                self.assertEqual(evidence["observed"]["SubState"], substate)
+
+    def test_timer_mismatch_never_queries_service_and_hides_unknown_value(self):
+        self.public._fields.return_value = {**self.paused, "UnitFileState": "PRIVATE"}
+        with self.assertRaises(RenewalStateMismatch) as caught:
+            self.tokens._paused()
+        self.public._fields.assert_called_once_with("certbot.timer", "ActiveState,SubState,UnitFileState")
+        self.assertEqual(caught.exception.evidence["unit"], "certbot.timer")
+        self.assertEqual(caught.exception.evidence["mismatched_fields"], ["UnitFileState"])
+        self.assertNotIn("PRIVATE", json.dumps(caught.exception.evidence))
+
+    def test_successful_pause_keeps_original_two_queries(self):
+        self.public._fields.side_effect = [self.paused, self.idle]
+        self.tokens._paused()
+        self.assertEqual(self.public._fields.call_args_list, [
+            unittest.mock.call("certbot.timer", "ActiveState,SubState,UnitFileState"),
+            unittest.mock.call("certbot.service", "ActiveState,SubState,MainPID,Job"),
+        ])
+
+    def test_query_error_is_not_replaced_with_fabricated_state_or_retried(self):
+        failure = PreparationError("query failed")
+        self.public._fields.side_effect = failure
+        with self.assertRaises(PreparationError) as caught:
+            self.tokens._idle()
+        self.assertIs(caught.exception, failure)
+        self.assertFalse(hasattr(failure, "evidence"))
+        self.assertEqual(self.public._fields.call_count, 1)
 
 
 class TokenHost(PortHost):

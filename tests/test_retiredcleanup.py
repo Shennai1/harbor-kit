@@ -16,10 +16,181 @@ from snellctl.menu import run_menu
 from snellctl.retiredcleanup import (CleanupPlan, INTENT, SUCCESS, RetiredCleanup, lineage_paths,
                                     run_retired_cleanup, run_retired_cleanup_check)
 from snellctl.retiredplan import ScopeBlocked
+from snellctl.tokenchange import RenewalStateMismatch
 from test_hostprep import DOMAIN, TOKEN
 from test_installer import Console
 import test_domainchange
 import test_retiredplan
+
+
+class Clock:
+    def __init__(self):
+        self.now, self.sleeps = 0, []
+
+    def __call__(self):
+        return self.now
+
+    def sleep(self, seconds):
+        self.sleeps.append(seconds)
+        self.now += seconds
+
+
+class PausedWaitTests(unittest.TestCase):
+    timer = "ActiveState=inactive\nSubState=dead\nUnitFileState=disabled\n"
+    idle = "ActiveState=inactive\nSubState=dead\nMainPID=0\nJob=\n"
+    busy = "ActiveState=activating\nSubState=start\nMainPID=123\nJob=PRIVATE-JOB\n"
+
+    def setUp(self):
+        self.clock = Clock()
+        self.prep = Mock()
+        tokens = SimpleNamespace(prep=self.prep, files=None)
+        self.engine = RetiredCleanup(tokens, clock=self.clock, sleep=self.clock.sleep)
+        self.report = {}
+        self.samples = []
+        self.prep._run.side_effect = self.query
+
+    def query(self, argv, timeout):
+        self.assertGreater(timeout, 0)
+        self.assertLessEqual(timeout, 5)
+        if argv == ["systemctl", "show", "certbot.timer", "-p", "ActiveState,SubState,UnitFileState"]:
+            return self.timer
+        self.assertEqual(argv, ["systemctl", "show", "certbot.service", "-p", "ActiveState,SubState,MainPID,Job"])
+        return self.samples.pop(0) if self.samples else self.idle
+
+    def wait(self):
+        self.engine._wait_paused(self.report)
+        return self.report["pause_wait"]
+
+    def test_already_idle_requires_two_observations_separated_by_wait(self):
+        result = self.wait()
+        self.assertEqual(result, {"result": "idle-observed-twice", "budget_seconds": 90,
+                                 "samples": 2, "busy_samples": 0, "elapsed_seconds": 1})
+        self.assertEqual(self.clock.sleeps, [1])
+        self.assertEqual(self.prep._run.call_count, 4)
+
+    def test_queued_then_starting_then_idle_is_not_a_failure(self):
+        self.samples = [self.idle.replace("Job=\n", "Job=PRIVATE-JOB\n"), self.busy]
+        result = self.wait()
+        self.assertEqual(result["result"], "idle-observed-twice")
+        self.assertEqual(result["busy_samples"], 2)
+        self.assertEqual(result["samples"], 4)
+        self.assertEqual(result["elapsed_seconds"], 3)
+        self.assertEqual(result["first_busy"]["observed"]["MainPID"], "0")
+        self.assertEqual(result["last_busy"]["observed"]["MainPID"], "123")
+        self.assertNotIn("PRIVATE", json.dumps(result))
+
+    def test_busy_between_idle_samples_resets_confirmation(self):
+        self.samples = [self.idle, self.busy, self.idle, self.idle]
+        self.assertEqual(self.wait()["samples"], 4)
+
+    def test_wait_for_recognized_process_transitions_only(self):
+        for active, sub in (("activating", "start-pre"), ("activating", "start-post"),
+                            ("active", "running"), ("deactivating", "stop-post")):
+            with self.subTest(state=(active, sub)):
+                self.samples = [self.busy.replace("activating", active).replace("SubState=start", "SubState=" + sub)]
+                self.assertEqual(self.wait()["busy_samples"], 1)
+
+    def test_permanently_busy_stops_without_stopping_service_or_retrying_mutations(self):
+        self.samples = [self.busy] * 100
+        with self.assertRaises(ScopeBlocked) as raised:
+            self.wait()
+        self.assertEqual(raised.exception.code, "renewal-idle-wait-timeout")
+        self.assertEqual(self.report["pause_wait"]["result"], "timeout")
+        self.assertEqual(self.clock.now, 90)
+        self.assertEqual(self.report["pause_wait"]["samples"], 90)
+        self.assertTrue(all(c.args[0][:2] == ["systemctl", "show"] for c in self.prep._run.call_args_list))
+
+    def test_timer_reactivated_during_wait_stops_immediately(self):
+        count = 0
+        def query(argv, timeout):
+            nonlocal count
+            if argv[2] == "certbot.timer":
+                count += 1
+                if count == 2:
+                    return self.timer.replace("inactive", "active").replace("dead", "waiting").replace("disabled", "enabled")
+            return self.query(argv, timeout)
+        self.prep._run.side_effect = query
+        self.samples = [self.busy]
+        with self.assertRaises(RenewalStateMismatch) as raised:
+            self.wait()
+        self.assertEqual(raised.exception.evidence["unit"], "certbot.timer")
+        self.assertEqual(self.prep._run.call_count, 3)
+
+    def test_failed_unknown_or_inconsistent_service_state_not_waited_on(self):
+        states = [self.busy.replace("activating", "failed").replace("SubState=start", "SubState=failed"),
+                  self.busy.replace("activating", "PRIVATE"), self.busy.replace("MainPID=123", "MainPID=PRIVATE"),
+                  self.busy.replace("MainPID=123", "MainPID=99999999999"),
+                  self.busy.replace("activating", "active").replace("SubState=start", "SubState=running").replace("123", "0"),
+                  self.idle.replace("MainPID=0", "MainPID=123"), self.idle.replace("SubState=dead", "SubState=exited")]
+        for value in states:
+            with self.subTest(value=value):
+                self.samples = [value]
+                before = len(self.clock.sleeps)
+                with self.assertRaises(RenewalStateMismatch) as raised:
+                    self.wait()
+                self.assertEqual(len(self.clock.sleeps), before)
+                self.assertNotIn("PRIVATE", json.dumps(raised.exception.evidence))
+
+    def test_missing_and_additional_fields_reject_without_wait(self):
+        for value in (self.idle.replace("Job=\n", ""), self.idle + "PRIVATE-FIELD=PRIVATE\n"):
+            self.samples = [value]
+            with self.assertRaises(RenewalStateMismatch):
+                self.wait()
+            self.assertEqual(self.clock.sleeps, [])
+
+    def test_duplicate_and_nonproperty_lines_fail_closed(self):
+        for value in (self.idle + "MainPID=PRIVATE\n", self.idle + "PRIVATE\n"):
+            self.samples = [value]
+            with self.assertRaises(ScopeBlocked) as raised:
+                self.wait()
+            self.assertEqual(raised.exception.code, "renewal-state-output-unrecognized")
+            self.assertEqual(self.clock.sleeps, [])
+
+    def test_failed_or_interrupted_query_is_not_retried(self):
+        for error in (PreparationError("PRIVATE"), KeyboardInterrupt()):
+            self.prep._run.reset_mock()
+            self.prep._run.side_effect = error
+            with self.assertRaises(type(error)):
+                self.wait()
+            self.assertEqual(self.prep._run.call_count, 1)
+            self.assertEqual(self.report["pause_wait"]["result"], "stopped")
+            self.assertEqual(self.clock.sleeps, [])
+
+    def test_wait_interruption_does_not_return_idle(self):
+        self.samples = [self.busy]
+        self.engine.sleep = Mock(side_effect=KeyboardInterrupt())
+        with self.assertRaises(KeyboardInterrupt):
+            self.wait()
+        self.assertEqual(self.report["pause_wait"]["result"], "stopped")
+        self.assertEqual(self.report["pause_wait"]["busy_samples"], 1)
+
+    def test_queries_consume_budget_and_late_idle_is_not_accepted(self):
+        def query(argv, timeout):
+            result = self.query(argv, timeout)
+            self.clock.now += 46
+            return result
+        self.prep._run.side_effect = query
+        with self.assertRaises(ScopeBlocked) as raised:
+            self.wait()
+        self.assertEqual(raised.exception.code, "renewal-idle-wait-timeout")
+        self.assertEqual(self.report["pause_wait"]["result"], "timeout")
+        self.assertEqual(self.clock.sleeps, [])
+
+    def test_query_timeout_shrinks_with_remaining_budget(self):
+        count = 0
+        def query(argv, timeout):
+            nonlocal count
+            count += 1
+            if count == 1:
+                self.clock.now += 88
+            else:
+                self.assertEqual(timeout, 2)
+                raise PreparationError("query timed out")
+            return self.query(argv, timeout)
+        self.prep._run.side_effect = query
+        with self.assertRaises(PreparationError):
+            self.wait()
+        self.assertEqual(self.prep._run.call_count, 2)
 
 
 class CleanupHost(test_retiredplan.PlanHost):
@@ -48,7 +219,8 @@ class RetiredCleanupTests(unittest.TestCase):
         self.fixture.assert_success(self.fixture.change())
         self.host, self.prep = self.fixture.host, self.fixture.prep
         self.enrich_renewals()
-        self.engine = RetiredCleanup(self.fixture.tokens)
+        self.clock = Clock()
+        self.engine = RetiredCleanup(self.fixture.tokens, clock=self.clock, sleep=self.clock.sleep)
         self.host.calls.clear()
         self.enterContext(self.linux_symlink_metadata())
 
@@ -429,6 +601,101 @@ class RetiredCleanupTests(unittest.TestCase):
         self.assertEqual(report["reason"], "timer-command-failed-or-uncertain")
         self.assertEqual(report["failure_location"]["module"], "retiredplan.py")
 
+    def test_renewal_started_at_pause_finishes_before_single_deletion(self):
+        samples = []
+        def observe(command):
+            if (command.argv[-1] == "ActiveState,SubState,MainPID,Job"
+                    and "certbot.timer" not in self.host.active):
+                samples.append(command)
+                if len(samples) <= 2:
+                    return Reply(0, PausedWaitTests.busy)
+            if command.argv[:2] == ("certbot", "delete"):
+                self.assertGreaterEqual(len(samples), 5)
+        self.host.local_override = observe
+        report = self.clean()
+        self.assert_success(report)
+        self.assertEqual(report["pause_wait"]["result"], "idle-observed-twice")
+        self.assertEqual(report["pause_wait"]["busy_samples"], 2)
+        self.assertEqual(report["pause_wait"]["samples"], 4)
+        self.assertEqual(report["pause_wait"]["elapsed_seconds"], 3)
+        self.assertEqual(sum(c.argv[:2] == ("certbot", "delete") for c in self.host.calls), 1)
+        self.assertEqual(sum(c.argv == ("systemctl", "disable", "--now", "certbot.timer")
+                             for c in self.host.calls), 1)
+        self.assertFalse(any(c.argv[:2] in {("systemctl", "start"), ("systemctl", "stop"),
+                                           ("systemctl", "restart")} for c in self.host.calls))
+        self.assertNotIn("PRIVATE", json.dumps(report))
+
+    def test_renewal_wait_timeout_preserves_resources_and_blocks_deletion(self):
+        def observe(command):
+            if (command.argv[-1] == "ActiveState,SubState,MainPID,Job"
+                    and "certbot.timer" not in self.host.active):
+                return Reply(0, PausedWaitTests.busy)
+        self.host.local_override = observe
+        report = self.clean()
+        self.assert_stopped(report, "renewal-pause-check")
+        self.assertEqual(report["reason"], "renewal-idle-wait-timeout")
+        self.assertEqual(report["pause_wait"]["result"], "timeout")
+        self.assertFalse(report["certbot_delete_attempted"])
+        self.assertFalse(report["credential_delete_attempted"])
+        self.assertFalse(report["renewal_paused_verified_after"])
+        self.assertEqual(report["fallback_pause_failure"]["reason"], "renewal-unit-state-mismatch")
+        self.assertTrue(self.host.path(CREDENTIAL).exists())
+        self.assertTrue(all(self.host.path(path).exists() for path in lineage_paths(DOMAIN)))
+        self.assertFalse(any(c.argv[0] == "certbot" for c in self.host.calls))
+
+    def test_certificate_or_target_change_during_wait_still_blocks_deletion(self):
+        for target in ("current-renewal", "old-credential"):
+            with self.subTest(target=target):
+                fixture = RetiredCleanupTests('test_check_read_only_and_plan_redacted')
+                try:
+                    fixture.setUp()
+                    path = ("/etc/letsencrypt/renewal/" + test_domainchange.NEW_DOMAIN + ".conf"
+                            if target == "current-renewal" else CREDENTIAL)
+                    def observe(command):
+                        if (command.argv[-1] == "ActiveState,SubState,MainPID,Job"
+                                and "certbot.timer" not in fixture.host.active and fixture.clock.now == 0):
+                            return Reply(0, PausedWaitTests.busy)
+                    def sleep(seconds):
+                        fixture.clock.sleep(seconds)
+                        if fixture.clock.now == 1:
+                            old = fixture.host.path(path).read_bytes()
+                            fixture.host.path(path).write_bytes(old + b"\n# changed by renewal\n")
+                    fixture.host.local_override = observe
+                    fixture.engine.sleep = sleep
+                    report = fixture.clean()
+                    fixture.assert_stopped(report)
+                    self.assertEqual(report["pause_wait"]["result"], "idle-observed-twice")
+                    self.assertFalse(report["certbot_delete_attempted"])
+                    self.assertFalse(report["credential_delete_attempted"])
+                    self.assertFalse(any(c.argv[0] == "certbot" for c in fixture.host.calls))
+                    self.assertTrue(all(fixture.host.path(p).exists() for p in lineage_paths(DOMAIN)))
+                finally:
+                    fixture.doCleanups()
+
+    def test_new_busy_state_after_wait_is_rejected_by_unchanged_health_gate(self):
+        samples = []
+        def observe(command):
+            if (command.argv[-1] == "ActiveState,SubState,MainPID,Job"
+                    and "certbot.timer" not in self.host.active):
+                samples.append(command)
+                if len(samples) >= 3:
+                    return Reply(0, PausedWaitTests.busy)
+        self.host.local_override = observe
+        report = self.clean()
+        self.assert_stopped(report, "renewal-pause-check")
+        self.assertEqual(report["pause_wait"]["result"], "idle-observed-twice")
+        self.assertEqual(report["reason"], "renewal-unit-state-mismatch")
+        self.assertFalse(report["certbot_delete_attempted"])
+
+    def test_busy_at_precheck_never_pauses_timer_or_enters_wait(self):
+        self.host.local_override = lambda c: Reply(0, PausedWaitTests.busy) if (
+            c.argv[-1] == "ActiveState,SubState,MainPID,Job") else None
+        with self.assertRaises(RenewalStateMismatch):
+            self.clean()
+        self.assertEqual(self.clock.sleeps, [])
+        self.assertFalse(self.prep._exists(INTENT))
+        self.assertFalse(any(c.argv[:2] == ("systemctl", "disable") for c in self.host.calls))
+
     def test_pause_postcheck_failure_preserves_original_and_fallback_diagnostics(self):
         with patch.object(self.engine, "_health", side_effect=PreparationError("PRIVATE cause")):
             report = self.clean()
@@ -438,6 +705,68 @@ class RetiredCleanupTests(unittest.TestCase):
         self.assertTrue(report["renewal_paused_verified_after"])
         self.assertNotIn("PRIVATE", json.dumps(report))
         self.assertNotIn("/Users/", json.dumps(report))
+
+    def test_idle_failure_evidence_survives_a_later_successful_fallback_check(self):
+        seen = []
+        def observe(command):
+            if (command.argv[-1] == "ActiveState,SubState,MainPID,Job"
+                    and "certbot.timer" not in self.host.active):
+                seen.append(command.argv)
+                if len(seen) == 1:
+                    return Reply(0, "ActiveState=inactive\nSubState=dead\nMainPID=0\n")
+        self.host.local_override = observe
+        report = self.clean()
+        self.assert_stopped(report, "renewal-pause-check")
+        self.assertEqual(report["reason"], "renewal-unit-state-mismatch")
+        self.assertEqual(report["unit_state_check"]["missing_fields"], ["Job"])
+        self.assertTrue(report["renewal_paused_verified_after"])
+        self.assertNotIn("fallback_pause_failure", report)
+        self.assertEqual(len(seen), 2)
+        self.assertFalse(report["certbot_delete_attempted"])
+        self.assertFalse(report["credential_delete_attempted"])
+        self.assertFalse(any(c.argv[0] == "certbot" for c in self.host.calls))
+        self.assertFalse(any(c.argv[:2] == ("systemctl", "stop") for c in self.host.calls))
+        directory = self.prep._read_record(INTENT)["log_directory"]
+        self.assertEqual(json.loads(self.host.path(directory + "/report.json").read_bytes()), report)
+
+    def test_busy_evidence_and_later_bad_fields_keep_separate_safe_evidence(self):
+        seen = []
+        def observe(command):
+            if (command.argv[-1] == "ActiveState,SubState,MainPID,Job"
+                    and "certbot.timer" not in self.host.active):
+                seen.append(command.argv)
+                if len(seen) == 1:
+                    return Reply(0, "ActiveState=active\nSubState=running\nMainPID=123\nJob=PRIVATE-JOB\n")
+                return Reply(0, "ActiveState=inactive\nSubState=dead\nMainPID=0\nPRIVATE-FIELD=PRIVATE-VALUE\n")
+        self.host.local_override = observe
+        report = self.clean()
+        self.assert_stopped(report, "renewal-pause-check")
+        self.assertEqual(report["pause_wait"]["first_busy"]["observed"]["MainPID"], "123")
+        self.assertEqual(report["pause_wait"]["busy_samples"], 1)
+        self.assertEqual(report["unit_state_check"]["missing_fields"], ["Job"])
+        fallback = report["fallback_pause_failure"]
+        self.assertEqual(fallback["failure_phase"], "fallback-pause-check")
+        self.assertEqual(fallback["unit_state_check"]["missing_fields"], ["Job"])
+        self.assertTrue(fallback["unit_state_check"]["unexpected_fields_present"])
+        self.assertNotIn("PRIVATE", json.dumps(report))
+        self.assertEqual(len(seen), 3)
+        self.assertFalse(report["renewal_paused_verified_after"])
+        self.assertFalse(report["certbot_delete_attempted"])
+        self.assertFalse(report["credential_delete_attempted"])
+        self.assertFalse(any(c.argv[0] == "certbot" for c in self.host.calls))
+
+    def test_command_read_failure_has_no_invented_state_evidence(self):
+        def observe(command):
+            if (command.argv[-1] == "ActiveState,SubState,MainPID,Job"
+                    and "certbot.timer" not in self.host.active):
+                return Reply(1, "PRIVATE-OUTPUT")
+        self.host.local_override = observe
+        report = self.clean()
+        self.assert_stopped(report, "renewal-pause-check")
+        self.assertNotIn("unit_state_check", report)
+        self.assertNotIn("unit_state_check", report["fallback_pause_failure"])
+        self.assertNotIn("PRIVATE", json.dumps(report))
+        self.assertFalse(report["certbot_delete_attempted"])
 
     def test_uncertain_pause_never_reaches_delete(self):
         self.host.local_override = lambda c: Reply(0, "PRIVATE", uncertain=True) if c.argv == ("systemctl", "disable", "--now", "certbot.timer") else None
@@ -552,6 +881,20 @@ class RetiredCleanupInterfaceTests(unittest.TestCase):
         ui = Console([DOMAIN, "y", "y"])
         self.assertEqual(run_retired_cleanup(factory=self.factory, terminal=ui), 1)
         self.assertIn("可能已部分删除", ui.text)
+
+    def test_pre_deletion_failure_message_requires_both_explicit_false_flags(self):
+        for certificate, credential in ((False, False), (True, False), (False, True), (0, False), (False, None)):
+            with self.subTest(certificate=certificate, credential=credential):
+                self.engine.clean.return_value = {"result": "stopped", "certbot_delete_attempted": certificate,
+                                                  "credential_delete_attempted": credential}
+                ui = Console([DOMAIN, "y", "y"])
+                self.assertEqual(run_retired_cleanup(factory=self.factory, terminal=ui), 1)
+                if certificate is False and credential is False:
+                    self.assertIn("本次未尝试删除旧证书或凭据", ui.text)
+                    self.assertNotIn("可能已部分删除", ui.text)
+                else:
+                    self.assertIn("可能已部分删除", ui.text)
+                self.assertIn("续期可能暂停", ui.text)
 
     def test_cli_and_menu_are_experimental_only(self):
         with patch("snellctl.retiredcleanup.run_retired_cleanup", return_value=0) as run:

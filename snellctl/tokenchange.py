@@ -23,6 +23,39 @@ UNCHANGED_RECORDS = ("public-ready", "public-files", "public-firewall-added",
                      "renewal-test-ready", "renewal-enable-ready", "certificate-ready")
 
 
+class RenewalStateMismatch(PreparationError):
+    """Keep only bounded, redacted evidence from the comparison that failed."""
+
+    def __init__(self, unit, expected, observed):
+        super().__init__("续期状态与要求不符或字段不完整；不停止 Certbot，不自动重试。")
+        allowed = {
+            "ActiveState": {"active", "inactive", "failed", "activating", "deactivating", "reloading", "maintenance"},
+            "SubState": {"dead", "running", "waiting", "exited", "failed", "start", "start-pre", "start-post",
+                         "stop", "stop-sigterm", "stop-sigkill", "stop-post", "final-sigterm", "final-sigkill",
+                         "auto-restart", "elapsed"},
+            "UnitFileState": {"enabled", "disabled", "static", "masked", "enabled-runtime", "masked-runtime",
+                              "indirect", "linked", "linked-runtime", "generated", "transient", "alias", "bad"},
+        }
+        safe = {}
+        for key in expected.keys() & observed.keys():
+            value = observed[key]
+            safe[key] = "[unrecognized-redacted]"
+            if not isinstance(value, str):
+                continue
+            if value == "" or (key in allowed and value in allowed[key]):
+                safe[key] = value
+            elif key == "MainPID" and re.fullmatch(r"[0-9]{1,10}", value) and int(value) <= 2147483647:
+                safe[key] = value
+            elif key == "Job":
+                safe[key] = "[nonempty-redacted]"
+        self.evidence = {
+            "unit": unit, "source": "failed-comparison", "expected": dict(expected), "observed": safe,
+            "missing_fields": sorted(expected.keys() - observed.keys()),
+            "mismatched_fields": sorted(key for key in expected.keys() & observed.keys() if observed[key] != expected[key]),
+            "unexpected_fields_present": bool(observed.keys() - expected.keys()),
+        }
+
+
 def _json_bytes(value):
     return (json.dumps(value, sort_keys=True) + "\n").encode()
 
@@ -83,14 +116,16 @@ class TokenChange:
         return snapshot
 
     def _idle(self):
-        if self.public._fields("certbot.service", "ActiveState,SubState,MainPID,Job") != {
-                "ActiveState": "inactive", "SubState": "dead", "MainPID": "0", "Job": ""}:
-            raise PreparationError("Certbot 正在执行或存在排队任务；不停止签发进程。")
+        fields = self.public._fields("certbot.service", "ActiveState,SubState,MainPID,Job")
+        expected = {"ActiveState": "inactive", "SubState": "dead", "MainPID": "0", "Job": ""}
+        if fields != expected:
+            raise RenewalStateMismatch("certbot.service", expected, fields)
 
     def _paused(self):
-        if self.public._fields("certbot.timer", "ActiveState,SubState,UnitFileState") != {
-                "ActiveState": "inactive", "SubState": "dead", "UnitFileState": "disabled"}:
-            raise PreparationError("未确认定时续期已暂停。")
+        fields = self.public._fields("certbot.timer", "ActiveState,SubState,UnitFileState")
+        expected = {"ActiveState": "inactive", "SubState": "dead", "UnitFileState": "disabled"}
+        if fields != expected:
+            raise RenewalStateMismatch("certbot.timer", expected, fields)
         self._idle()
 
     def _lineage(self, spec, *, credential_path=None):

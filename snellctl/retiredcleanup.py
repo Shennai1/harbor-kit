@@ -15,7 +15,7 @@ from .domaininventory import BASE, ROOTS, Inventory
 from .hostprep import STATE, Command, PreparationError, Reply
 from .installer import Terminal, confirm
 from .retiredplan import PARTS, RetiredPlan, ScopeBlocked, _require
-from .tokenchange import CURRENT, _json_bytes, real_token_change
+from .tokenchange import CURRENT, RenewalStateMismatch, _json_bytes, real_token_change
 
 
 INTENT = "retired-cleanup-intent"
@@ -41,11 +41,13 @@ class CleanupPlan:
 
 
 class RetiredCleanup:
-    def __init__(self, tokens, progress=lambda phase: None):
+    def __init__(self, tokens, progress=lambda phase: None, *, clock=None, sleep=None):
         self.tokens, self.prep, self.files = tokens, tokens.prep, tokens.files
         self.progress, self.phase = progress, "not-started"
         self.scope = RetiredPlan(tokens, self._phase)
         self.linux_style_live_links = 0
+        self.clock = clock if clock is not None else time.monotonic
+        self.sleep = sleep if sleep is not None else time.sleep
 
     def _phase(self, phase):
         self.phase = phase
@@ -125,6 +127,8 @@ class RetiredCleanup:
         reason = (error.code if isinstance(error, ScopeBlocked) else "interrupted"
                   if isinstance(error, (KeyboardInterrupt, EOFError)) else "unreadable-busy-unsupported-or-check-failed")
         result = {"failure_phase": self.phase, "reason": reason}
+        if isinstance(error, RenewalStateMismatch):
+            result.update(reason="renewal-unit-state-mismatch", unit_state_check=error.evidence)
         trace = error.__traceback__
         while trace is not None:
             source = Path(trace.tb_frame.f_code.co_filename)
@@ -143,6 +147,66 @@ class RetiredCleanup:
         _require(isinstance(reply, Reply), "timer-command-result-unrecognized")
         report[key].update(exit_code=reply.code, execution_uncertain=reply.uncertain)
         _require(reply.code == 0 and not reply.uncertain, "timer-command-failed-or-uncertain")
+
+    def _wait_paused(self, report):
+        """Observe an already queued/running renewal; never start or stop it."""
+        started = self.clock()
+        deadline = started + 90
+        wait = report["pause_wait"] = {"result": "stopped", "budget_seconds": 90,
+                                       "samples": 0, "busy_samples": 0, "elapsed_seconds": 0}
+        timer = {"ActiveState": "inactive", "SubState": "dead", "UnitFileState": "disabled"}
+        idle = {"ActiveState": "inactive", "SubState": "dead", "MainPID": "0", "Job": ""}
+        transitions = {("activating", "start-pre"), ("activating", "start"), ("activating", "start-post"),
+                       ("active", "running"), ("deactivating", "stop"), ("deactivating", "stop-post"),
+                       ("deactivating", "stop-sigterm"), ("deactivating", "stop-sigkill"),
+                       ("deactivating", "final-sigterm"), ("deactivating", "final-sigkill")}
+        def remaining():
+            left = deadline - self.clock()
+            if left < 1:
+                wait["result"] = "timeout"
+                raise ScopeBlocked("renewal-idle-wait-timeout")
+            return left
+
+        def fields(unit, expected):
+            output = self.prep._run(["systemctl", "show", unit, "-p", ",".join(expected)],
+                                    min(5, int(remaining())))
+            pairs = [line.split("=", 1) for line in output.splitlines()]
+            _require(all(len(pair) == 2 for pair in pairs), "renewal-state-output-unrecognized")
+            result = dict(pairs)
+            _require(len(result) == len(pairs), "renewal-state-output-unrecognized")
+            remaining()
+            return result
+
+        consecutive_idle = 0
+        try:
+            while True:
+                observed = fields("certbot.timer", timer)
+                if observed != timer:
+                    raise RenewalStateMismatch("certbot.timer", timer, observed)
+                observed = fields("certbot.service", idle)
+                wait["samples"] += 1
+                if observed == idle:
+                    consecutive_idle += 1
+                    if consecutive_idle == 2:
+                        wait["result"] = "idle-observed-twice"
+                        return
+                else:
+                    mismatch = RenewalStateMismatch("certbot.service", idle, observed)
+                    known = (set(observed) == set(idle)
+                             and re.fullmatch(r"[0-9]{1,10}", observed.get("MainPID", "")) is not None
+                             and int(observed["MainPID"]) <= 2147483647
+                             and (observed["ActiveState"] != "active" or int(observed["MainPID"]) > 0))
+                    pending = (observed.get("ActiveState") == "inactive" and observed.get("SubState") == "dead"
+                               and observed.get("MainPID") == "0" and bool(observed.get("Job")))
+                    if not known or not (pending or (observed["ActiveState"], observed["SubState"]) in transitions):
+                        raise mismatch
+                    consecutive_idle = 0
+                    wait["busy_samples"] += 1
+                    wait.setdefault("first_busy", mismatch.evidence)
+                    wait["last_busy"] = mismatch.evidence
+                self.sleep(min(1, remaining()))
+        finally:
+            wait["elapsed_seconds"] = round(max(0, self.clock() - started), 3)
 
     def inspect_only(self, domain):
         report = {"format": 1, "operation": "retired-cleanup-check", "result": "blocked-preserve-all",
@@ -208,6 +272,7 @@ class RetiredCleanup:
                 timer_attempted = True
                 self._timer_command(report, "pause_command", "disable")
                 self._phase("renewal-pause-check")
+                self._wait_paused(report)
                 self._health(before, paused=True)
                 self._phase("before-delete-recheck")
                 self.scope._references(inventory, target, credential)
@@ -305,6 +370,7 @@ def run_retired_cleanup(*, factory=real_token_change, terminal=None):
                 ui.say("已取消；没有修改或删除。")
                 return 130
             ui.say("将暂停续期，用 Certbot 删除指定旧证书组及续期配置，再删除独立本机凭据；本次不备份，不可撤销。")
+            ui.say("暂停后有已排队或运行中的续期任务时，最多用 90 秒等待其自然结束；不强制中止，超时停止清理。")
             ui.say("不改现用节点、SSH/UFW，不卸载软件，不撤销 CF Token 或证书，不删除 DNS、ACME 账户或历史日志。")
             ui.say("成功后恢复续期，可能触发真实到期续签；失败保留待核查标记，续期可能停用，不自动回退或重试。")
             ui.say("请保持 SSH 连接，不并行运行 Certbot 或其他管理操作；只分享最后 JSON，不分享原始日志。")
@@ -318,7 +384,10 @@ def run_retired_cleanup(*, factory=real_token_change, terminal=None):
         if report["result"] == SUCCESS:
             ui.say("旧本机资源已清理，现用节点本机检查通过，自动续期已恢复。无需修改 Surge，请再测试延迟及实际使用。")
             return 0
-        ui.say("清理未确认完成，文件可能已部分删除、续期可能暂停。保留现场，查看 install-status；不要重试、删标记或直接重启。")
+        if report.get("certbot_delete_attempted") is False and report.get("credential_delete_attempted") is False:
+            ui.say("本次未尝试删除旧证书或凭据，续期可能暂停。保留现场，查看 install-status；不要重试、删标记或直接重启。")
+        else:
+            ui.say("清理未确认完成，文件可能已部分删除、续期可能暂停。保留现场，查看 install-status；不要重试、删标记或直接重启。")
         return 1
     except (KeyboardInterrupt, EOFError):
         ui.say("已取消；若已进入写入阶段，请核对 install-status，不重试或删除记录。")

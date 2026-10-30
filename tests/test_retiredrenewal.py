@@ -92,6 +92,21 @@ class RetiredRenewalTests(unittest.TestCase):
             self.restore()
         self.assertEqual(self.host.calls, [])
 
+    def test_new_failed_comparison_evidence_is_preserved_by_restore(self):
+        with patch.object(self.tokens.public, '_fields', return_value={
+                'ActiveState': 'inactive', 'SubState': 'dead', 'MainPID': '0'}):
+            try:
+                self.tokens._idle()
+            except PreparationError as error:
+                details = self.fixture.engine._check_failure(error)
+        self.assertEqual(details['unit_state_check']['missing_fields'], ['Job'])
+        self.update_failed(**details)
+        self.failed_report = self.host.path(self.directory + '/report.json').read_bytes()
+        report = self.restore()
+        self.assertEqual(report['result'], SUCCESS, report)
+        self.assert_preserved()
+        self.assert_no_deletion_or_pause()
+
     def test_failure_report_must_exclude_deletion_and_later_phases(self):
         for changes in ({'certbot_delete_attempted': True}, {'credential_delete_attempted': True},
                         {'certificate_removed_verified': True}, {'certbot_delete_attempted': 0},
