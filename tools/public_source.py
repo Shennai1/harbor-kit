@@ -28,6 +28,7 @@ PUBLIC_FILES = (
     "tests/test_hostprep.py", "tests/test_installer.py", "tests/test_preflight.py",
     "tests/test_portchange.py", "tests/test_public_source.py", "tests/test_publish.py", "tests/test_retiredplan.py", "tests/test_retiredcleanup.py", "tests/test_retiredrenewal.py", "tests/test_retiredcancel.py", "tests/test_renewalprobe.py", "tests/test_resume.py", "tests/test_rotation.py", "tests/test_storage.py",
     "tests/test_tlsprobe.py", "tests/test_tokenchange.py", "tests/test_tokendiag.py", "tests/test_tokenresume.py", "docs/token-change.md", "tools/public_source.py",
+    "snellctl/uninstallplan.py", "tests/test_uninstallplan.py", "docs/uninstall-plan.md",
 )
 SENSITIVE = (
     re.compile(r"-----BEGIN (?:RSA |EC |OPENSSH |ENCRYPTED )?PRIVATE KEY-----"),
