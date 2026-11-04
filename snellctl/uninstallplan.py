@@ -128,29 +128,34 @@ class UninstallPlan:
         entry = ("-A", "ufw-user-input", "-p", "tcp", "--dport", str(spec.public_port), "-j", "ACCEPT")
         _require(running.count(entry) == 1, "entry-rule-not-unique-recorded-ipv4")
 
+    def inspect_locked(self):
+        """Internal snapshot shared with the separately confirmed executor."""
+        self._phase("current-deployment-check")
+        before = self.tokens._check()
+        spec = before[1]
+        credential = self.prep.credential_path(spec)
+        inventory = Inventory(self.files)
+        self._phase("managed-layout-check")
+        self._layout(inventory, spec, credential)
+        self._phase("certificate-and-shared-scope")
+        generations = self._certificate(inventory, spec, credential)
+        self._phase("entry-rule-check")
+        self._firewall(spec, before[2])
+        self._phase("unchanged-health-check")
+        _require(self.tokens._check()[0] == before[0], "current-deployment-changed")
+        inventory.recheck()
+        return before, inventory, generations
+
     def check(self):
         report = {"format": 1, "operation": "uninstall-plan", "result": "blocked-preserve-all",
-                  "scope": "managed-main", "uninstall_implemented": False, "uninstall_authorized": False,
+                  "scope": "managed-main", "uninstall_implemented": True, "uninstall_authorized": False,
                   "host_changes_attempted": False, "all_assets_preserved": True, "report_saved": False,
                   "current_service_health": "not-confirmed", "global_reference_check": "not-performed",
                   "limitations": list(LIMITATIONS)}
         try:
             self._phase("preparation-lock")
             with self._commands(), self.prep._lock():
-                self._phase("current-deployment-check")
-                before = self.tokens._check()
-                _plan, spec, record, _credential, _current, _unchanged = before
-                credential = self.prep.credential_path(spec)
-                inventory = Inventory(self.files)
-                self._phase("managed-layout-check")
-                self._layout(inventory, spec, credential)
-                self._phase("certificate-and-shared-scope")
-                generations = self._certificate(inventory, spec, credential)
-                self._phase("entry-rule-check")
-                self._firewall(spec, record)
-                self._phase("unchanged-health-check")
-                _require(self.tokens._check()[0] == before[0], "current-deployment-changed")
-                inventory.recheck()
+                _before, _inventory, generations = self.inspect_locked()
                 report.update(result=SUCCESS, current_service_health="local-checks-passed",
                               managed_configuration="records-content-and-live-checks-passed",
                               review_counts={"node_configurations": 2, "dedicated_services": 2, "nginx_sites": 1,
@@ -162,7 +167,7 @@ class UninstallPlan:
                               preserve=["ssh", "ufw-and-all-other-rules", "packages-and-vendor-units", "kernel-and-apt-sources",
                                         "acme-account", "cloudflare-tokens-and-dns", "preparation-records-and-history",
                                         "unrelated-resources"],
-                              required_before_uninstall=["separate-reviewed-uninstaller-implementation",
+                              required_before_uninstall=["separate-uninstall-entry-and-live-acceptance",
                                   "operator-confirms-no-other-consumers", "independent-ssh-and-console-verification",
                                   "explicit-node-outage-and-deletion-consent", "nginx-and-renewal-final-state-decision",
                                   "fresh-live-recheck"])
@@ -183,7 +188,7 @@ def run_uninstall_plan(*, factory=real_token_change, terminal=None):
         ui.say("卸载范围预检查需要交互终端；不接受自动确认或目标参数。")
         return 2
     try:
-        ui.say("只读卸载范围预检查：仅限本工具完整受管 main，没有卸载执行入口。")
+        ui.say("只读卸载范围预检查：仅限本工具完整受管 main，本入口不能执行卸载。")
         ui.say("从已验证配置读取现用域名和端口；不输入 Token，不显示密钥，不安装快捷指令。")
         ui.say("会读取现用受限配置作内存核验并检查本机 TLS；不暂停续期、不改服务或 SSH/UFW，不删除文件。")
         ui.say("请勿同时运行 Certbot 或其他管理操作；本次确认不是停机或删除授权。")

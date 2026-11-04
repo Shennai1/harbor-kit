@@ -40,7 +40,7 @@ class UninstallScopeTests(unittest.TestCase):
         self.assertEqual(report['result'], 'blocked-preserve-all', report)
         self.assertFalse(report['host_changes_attempted'])
         self.assertFalse(report['uninstall_authorized'])
-        self.assertFalse(report['uninstall_implemented'])
+        self.assertTrue(report['uninstall_implemented'])
         self.assertTrue(report['all_assets_preserved'])
         self.assertFalse(report['report_saved'])
         if reason:
@@ -51,7 +51,7 @@ class UninstallScopeTests(unittest.TestCase):
         self.assertEqual(report['result'], SUCCESS, report)
         self.assertEqual(report['current_service_health'], 'local-checks-passed')
         self.assertFalse(report['uninstall_authorized'])
-        self.assertFalse(report['uninstall_implemented'])
+        self.assertTrue(report['uninstall_implemented'])
         self.assertEqual(report['review_counts']['recorded_ipv4_entry_rules'], 1)
         self.assertEqual(report['review_counts']['archive_generations'], 1)
         self.assertEqual(report['global_reference_check'], 'not-performed')

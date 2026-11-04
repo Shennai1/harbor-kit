@@ -291,6 +291,10 @@ class Preparation:
         return self.files.info(STATE + "/" + name + ".json") is not None
 
     def _no_pending_change(self):
+        if self._exists("uninstall-intent"):
+            raise PreparationError("有未确认完成的卸载；节点或续期可能停用，保留现场，不重试或导出配置。")
+        if self._exists("uninstall-ready"):
+            raise PreparationError("已有卸载完成记录；历史仍保留，不将其当成可直接重装的新机。")
         if self._exists("retired-cleanup-intent"):
             raise PreparationError("有未确认完成的旧域名清理；保留现场，核查文件及续期状态，不重试或导出配置。")
         if self._exists("domain-change-intent"):
@@ -469,13 +473,24 @@ class Preparation:
                         self._read_record(phase + suffix)
                         phases[phase] = label
                         break
+            uninstall = "none-recorded"
+            if self._exists("uninstall-intent"):
+                self._read_record("uninstall-intent")
+                uninstall = "needs-inspection"
+            elif self._exists("uninstall-ready"):
+                value = self._read_record("uninstall-ready")
+                if value.get("result") != "managed-node-uninstalled-history-preserved" or value.get("format") != 1:
+                    raise PreparationError("卸载完成记录不完整，不能当作成功。")
+                uninstall = "completion-recorded"
             return {"format": 1, "mode": "preparation-records-only", "phases": phases,
+                    "uninstall": uninstall,
                     "key_rotation": "needs-inspection" if self._exists("key-rotation-intent") else "none-pending",
                     "port_change": "needs-inspection" if self._exists("port-change-intent") else "none-pending",
                     "token_change": "needs-inspection" if self._exists("token-change-intent") else "none-pending",
                     "domain_change": "needs-inspection" if self._exists("domain-change-intent") else "none-pending",
                     "retired_cleanup": "needs-inspection" if self._exists("retired-cleanup-intent") else "none-pending",
-                    "deploy_ready": False, "renewal_enabled_by_this_engine": self._exists("renewal-enable-ready"),
+                    "deploy_ready": False, "renewal_enabled_by_this_engine":
+                        self._exists("renewal-enable-ready") and uninstall != "completion-recorded",
                     "current_service_health": "not-checked"}
 
     def credential(self, token: str):

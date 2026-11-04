@@ -60,6 +60,8 @@ def main(argv: list[str] | None = None) -> int:
     inventory.add_argument("--json", action="store_true", help="输出匿名引用报告，不保存文件")
     commands.add_parser("retired-domain-plan", help="交互核查一个旧域名的资源范围及现用节点健康；不清理")
     commands.add_parser("uninstall-plan", help="只读核查完整受管 main 的卸载范围；不卸载、不生成删除命令")
+    uninstall = commands.add_parser("uninstall", help="实验版受管 main 卸载；停止节点、保留软件包及历史，须独立确认")
+    uninstall.add_argument("--experimental", action="store_true", help="允许卸载核查，仍需四项交互确认")
     retired_cleanup = commands.add_parser("clean-retired-domain", help="实验版：确认后删除单个旧域名的本机证书、续期配置和独立凭据")
     retired_mode = retired_cleanup.add_mutually_exclusive_group()
     retired_mode.add_argument("--experimental", action="store_true", help="开启不可撤销的受限清理，仍需交互确认")
@@ -94,6 +96,12 @@ def main(argv: list[str] | None = None) -> int:
         elif action == "recover":
             command.add_argument("--action", required=True, choices=("resume", "rollback"))
     args = parser.parse_args(argv)
+    if args.command == "uninstall":
+        if not args.experimental:
+            print("卸载需要 --experimental，仍须核查、备用连接及不可撤销删除确认。", file=sys.stderr)
+            return 2
+        from .uninstall import run_uninstall
+        return run_uninstall()
     if args.command == "probe-renewal-pause":
         if not args.experimental:
             print("暂停验证需要 --experimental，仍须核查及确认；不执行清理。", file=sys.stderr)
