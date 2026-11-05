@@ -30,6 +30,7 @@ PUBLIC_FILES = (
     "tests/test_tlsprobe.py", "tests/test_tokenchange.py", "tests/test_tokendiag.py", "tests/test_tokenresume.py", "docs/token-change.md", "tools/public_source.py",
     "snellctl/uninstallplan.py", "tests/test_uninstallplan.py", "docs/uninstall-plan.md",
     "snellctl/uninstall.py", "tests/test_uninstall.py", "docs/uninstall.md",
+    "snellctl/reinstallplan.py", "tests/test_reinstallplan.py", "docs/reinstall-plan.md",
 )
 SENSITIVE = (
     re.compile(r"-----BEGIN (?:RSA |EC |OPENSSH |ENCRYPTED )?PRIVATE KEY-----"),

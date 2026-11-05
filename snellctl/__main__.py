@@ -60,6 +60,7 @@ def main(argv: list[str] | None = None) -> int:
     inventory.add_argument("--json", action="store_true", help="输出匿名引用报告，不保存文件")
     commands.add_parser("retired-domain-plan", help="交互核查一个旧域名的资源范围及现用节点健康；不清理")
     commands.add_parser("uninstall-plan", help="只读核查完整受管 main 的卸载范围；不卸载、不生成删除命令")
+    commands.add_parser("reinstall-plan", help="只读核查成功卸载后的 main；保留历史，不执行重装")
     uninstall = commands.add_parser("uninstall", help="实验版受管 main 卸载；停止节点、保留软件包及历史，须独立确认")
     uninstall.add_argument("--experimental", action="store_true", help="允许卸载核查，仍需四项交互确认")
     retired_cleanup = commands.add_parser("clean-retired-domain", help="实验版：确认后删除单个旧域名的本机证书、续期配置和独立凭据")
@@ -129,6 +130,9 @@ def main(argv: list[str] | None = None) -> int:
             return 2
         from .retiredcleanup import run_retired_cleanup
         return run_retired_cleanup()
+    if args.command == "reinstall-plan":
+        from .reinstallplan import run_reinstall_plan
+        return run_reinstall_plan()
     if args.command == "uninstall-plan":
         from .uninstallplan import run_uninstall_plan
         return run_uninstall_plan()
