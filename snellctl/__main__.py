@@ -61,6 +61,7 @@ def main(argv: list[str] | None = None) -> int:
     commands.add_parser("retired-domain-plan", help="交互核查一个旧域名的资源范围及现用节点健康；不清理")
     commands.add_parser("uninstall-plan", help="只读核查完整受管 main 的卸载范围；不卸载、不生成删除命令")
     commands.add_parser("reinstall-plan", help="只读核查成功卸载后的 main；保留历史，不执行重装")
+    commands.add_parser("maintenance-plan", help="只读盘点受管组件版本、记录及来源模板；不升级或查询最新版本")
     reinstall = commands.add_parser("reinstall", help="实验版：已成功卸载 main 的受控重装，保留历史并生成新密钥")
     reinstall.add_argument("--experimental", action="store_true", help="允许重装核查，仍需交互确认及现场复查")
     uninstall = commands.add_parser("uninstall", help="实验版受管 main 卸载；停止节点、保留软件包及历史，须独立确认")
@@ -135,6 +136,9 @@ def main(argv: list[str] | None = None) -> int:
     if args.command == "reinstall-plan":
         from .reinstallplan import run_reinstall_plan
         return run_reinstall_plan()
+    if args.command == "maintenance-plan":
+        from .maintenance import run_maintenance
+        return run_maintenance()
     if args.command == "reinstall":
         if not args.experimental:
             print("受控重装需要 --experimental；仅限成功卸载的 main，仍需交互核查和确认。", file=sys.stderr)

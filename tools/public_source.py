@@ -32,6 +32,7 @@ PUBLIC_FILES = (
     "snellctl/uninstall.py", "tests/test_uninstall.py", "docs/uninstall.md",
     "snellctl/reinstallplan.py", "tests/test_reinstallplan.py", "docs/reinstall-plan.md",
     "snellctl/reinstall.py", "tests/test_reinstall.py", "docs/reinstall.md",
+    "snellctl/maintenance.py", "tests/test_maintenance.py", "docs/component-maintenance.md",
 )
 SENSITIVE = (
     re.compile(r"-----BEGIN (?:RSA |EC |OPENSSH |ENCRYPTED )?PRIVATE KEY-----"),
