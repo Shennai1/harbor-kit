@@ -291,6 +291,7 @@ class Preparation:
         return self.files.info(STATE + "/" + name + ".json") is not None
 
     def _no_pending_change(self):
+        self._reinstall_gate()
         if self._exists("uninstall-intent"):
             raise PreparationError("有未确认完成的卸载；节点或续期可能停用，保留现场，不重试或导出配置。")
         if self._exists("uninstall-ready"):
@@ -305,6 +306,10 @@ class Preparation:
             raise PreparationError("有未确认完成的端口更换；保留现场，不重试或导出配置。")
         if self._exists("token-change-intent"):
             raise PreparationError("有未确认完成的 Token 更换；保留凭据及续期状态，不重试或导出配置。")
+
+    def _reinstall_gate(self):
+        if self._exists("reinstall-intent"):
+            raise PreparationError("有未确认完成的重装；保留历史和现场，不重跑安装、接续或导出配置。")
 
     @contextmanager
     def _lock(self):
@@ -394,6 +399,7 @@ class Preparation:
 
     def packages(self):
         with self._lock():
+            self._reinstall_gate()
             if self._exists("packages-ready"):
                 self._guards()
                 record = self._read_record("packages-ready")
@@ -484,19 +490,22 @@ class Preparation:
                 uninstall = "completion-recorded"
             return {"format": 1, "mode": "preparation-records-only", "phases": phases,
                     "uninstall": uninstall,
+                    "reinstall": ("needs-inspection" if self._exists("reinstall-intent") else
+                                  "completion-recorded" if self._exists("reinstall-ready") else "none-recorded"),
                     "key_rotation": "needs-inspection" if self._exists("key-rotation-intent") else "none-pending",
                     "port_change": "needs-inspection" if self._exists("port-change-intent") else "none-pending",
                     "token_change": "needs-inspection" if self._exists("token-change-intent") else "none-pending",
                     "domain_change": "needs-inspection" if self._exists("domain-change-intent") else "none-pending",
                     "retired_cleanup": "needs-inspection" if self._exists("retired-cleanup-intent") else "none-pending",
                     "deploy_ready": False, "renewal_enabled_by_this_engine":
-                        self._exists("renewal-enable-ready") and uninstall != "completion-recorded",
+                        self._exists("renewal-enable-ready") and uninstall != "completion-recorded" and not self._exists("reinstall-intent"),
                     "current_service_health": "not-checked"}
 
     def credential(self, token: str):
         if not isinstance(token, str) or not re.fullmatch(r"[A-Za-z0-9_-]{20,256}", token):
             raise PreparationError("Token 格式不符合要求；内容不会显示。")
         with self._lock():
+            self._reinstall_gate()
             if not self._exists("packages-ready"):
                 raise PreparationError("软件准备尚未完成。")
             self._guards()
@@ -534,6 +543,7 @@ class Preparation:
         if agree_tos is not True or (production and confirm_issue is not True):
             raise PreparationError("需要明确同意 CA 条款；正式签发还需要单独确认。")
         with self._lock():
+            self._reinstall_gate()
             if not self._exists("packages-ready"):
                 raise PreparationError("软件准备尚未完成。")
             self._guards()

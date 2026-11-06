@@ -1,7 +1,7 @@
 # 卸载后重装预检查
 
 `reinstall-plan` 只读检查本工具已经成功卸载的 Debian 13 / amd64 单节点 main。
-它不是重装执行器，也不能恢复中断或部分卸载。当前仅完成本地测试，尚未实机验收。
+它不是重装执行器，也不能恢复中断或部分卸载。只读正常路径已有用户实机通过反馈。
 不要在不包含本功能的旧源码中运行此命令；固定版本交付仍需单独确认。
 
 ```bash
@@ -39,7 +39,7 @@ python3 -E -s -B -m snellctl reinstall-plan
   "result": "reinstall-scope-checked-no-changes",
   "current_state": "uninstalled-local-checks-passed",
   "reinstall_ready": false,
-  "reinstall_implemented": false,
+  "reinstall_implemented": true,
   "reinstall_authorized": false,
   "host_changes_attempted": false,
   "report_saved": false
@@ -58,8 +58,8 @@ SSH 服务及放行规则不证明独立 SSH 新连接成功。协作锁无法�
 
 ## 下一阶段边界
 
-真正重装仍须单独实现和审核：在保留历史与锁连续性的前提下隔离新一轮记录，处理中断和部分写入，
-重新核对软件源及依赖，重新选择域名、端口和区域凭据，生成全新两组节点密钥，
-独立确认 CA 条款、签发及公网开放，并完成客户端和重启验收。
+`reinstall_implemented=true` 仅表示另有 [实验性受控重装入口](reinstall.md)，不表示本次核查授权写入。
+重装仍须单独确认，并重新核对软件源、依赖、域名、端口及区域凭据，生成全新两组节点密钥，
+独立确认 CA 条款、签发及公网开放，再完成客户端和重启验收。中断现场不能自动恢复。
 保留的 ACME 账户、软件包、空目录和历史不应被当作“全新 VPS”。
 原 `install` 新机保护检查没有放宽，不能在本次预检查通过后直接重跑它。

@@ -317,7 +317,12 @@ def render_status(report):
             lines.append("节点卸载：未确认完成；节点及续期可能停用、资源可能部分删除，不重试、重启或删除标记。")
         elif report.get("uninstall") == "completion-recorded":
             lines.append("节点卸载：有完成记录；上述安装记录为历史，不代表当前仍在运行或允许直接重装。")
+        if report.get("reinstall") == "needs-inspection":
+            lines.append("受控重装：未确认完成；阶段记录可能处于归档或部署途中，不重跑、接续或删除标记。")
+        elif report.get("reinstall") == "completion-recorded":
+            lines.append("受控重装：有服务端完成记录；不代表外部客户端或重启验收已通过。")
         if (report["phases"] == PENDING_PUBLIC_PHASES
+                and report.get("reinstall") != "needs-inspection"
                 and report.get("key_rotation") != "needs-inspection"
                 and report.get("port_change") != "needs-inspection"
                 and report.get("token_change") != "needs-inspection"

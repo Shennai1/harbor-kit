@@ -19,7 +19,7 @@ from .uninstall import COMPLETE, GONE_FIELDS, SUCCESS as UNINSTALL_SUCCESS
 
 
 SUCCESS = "reinstall-scope-checked-no-changes"
-PENDING = ("uninstall-intent", "retired-cleanup-intent", "domain-change-intent",
+PENDING = ("reinstall-intent", "uninstall-intent", "retired-cleanup-intent", "domain-change-intent",
            "key-rotation-intent", "port-change-intent", "token-change-intent")
 PACKAGE_QUERY = ("dpkg-query", "-W", "-f=${Package}\t${db:Status-Abbrev}\t${Version}\n", *DEPENDENCIES)
 GONE = {"LoadState": "not-found", "ActiveState": "inactive", "SubState": "dead", "MainPID": "0", "Job": ""}
@@ -55,7 +55,7 @@ LIMITATIONS = (
     "只观察旧入口及已知程序监听；新域名、端口、DNS、凭据和证书尚未选择或验证。",
     "SSH 监听与规则不证明新连接或云安全组可用；没有检查全部内核规则、任务或容器。",
     "复用原协作锁并复查已读元数据和状态，不是全系统原子快照，无法阻止外部 root 并发变更。",
-    "保留软件包、ACME 账户、空目录和历史；尚未实现历史分代及受控重装，不能直接重跑新机安装。",
+    "保留软件包、ACME 账户、空目录和历史；重装为独立实验入口，不能直接重跑新机安装。",
 )
 
 
@@ -253,7 +253,7 @@ class ReinstallPlan:
     def check(self):
         report = {"format": 1, "operation": "reinstall-plan", "scope": "uninstalled-managed-main",
                   "result": "blocked-preserve-all", "host_changes_attempted": False, "report_saved": False,
-                  "all_assets_preserved": True, "reinstall_implemented": False, "reinstall_authorized": False,
+                  "all_assets_preserved": True, "reinstall_implemented": True, "reinstall_authorized": False,
                   "reinstall_ready": False, "current_state": "not-confirmed", "apt_indexes_refreshed": False,
                   "global_reference_check": "not-performed", "limitations": list(LIMITATIONS)}
         try:
@@ -278,7 +278,7 @@ class ReinstallPlan:
                               retained_packages="installed-and-local-config-checks-passed",
                               acme_account_directory=accounts, acme_account_contents_read=False,
                               historical_records="preserved-not-reset", new_deployment_parameters="not-selected",
-                              required_before_reinstall=["separate-reviewed-reinstall-implementation",
+                              required_before_reinstall=["separate-experimental-reinstall-consent",
                                   "history-generation-and-interruption-handling", "fresh-apt-trust-and-package-review",
                                   "new-parameters-credentials-and-node-keys", "explicit-installation-and-ca-consent",
                                   "fresh-host-check-and-client-reboot-acceptance"])
@@ -297,7 +297,7 @@ def run_reinstall_plan(*, factory=real_token_change, terminal=None):
         ui.say("重装预检查需要交互终端；不接受自动确认、域名、路径或秘密参数。")
         return 2
     try:
-        ui.say("只读重装预检查：仅限本工具已成功卸载的 main；尚无重装执行入口。")
+        ui.say("只读重装预检查：仅限本工具已成功卸载的 main；本命令不执行重装。")
         ui.say("核对卸载记录、保留目录、软件包、服务和 SSH/UFW；不读取秘密或 ACME 账户内容。")
         ui.say("不联网、不签发、不安装、不启停服务、不删除历史，也不安装快捷命令。请勿并行管理或运行 Certbot。")
         if not confirm(ui, "确认只读检查卸载后的状态，保留全部资源？"):

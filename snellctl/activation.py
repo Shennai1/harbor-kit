@@ -171,6 +171,7 @@ class Activation:
         if spec.node != "main":
             raise PreparationError("首轮新机激活仅支持单节点 main。")
         with self.prep._lock():
+            self.prep._reinstall_gate()
             if self.prep._exists("public-intent") or self.prep._exists("renewal-enable-intent"):
                 raise PreparationError("已进入公网启用阶段，不能再按本机初次激活流程操作。")
             spec = self._version(spec)
@@ -270,6 +271,7 @@ class Activation:
         if confirm_test is not True:
             raise PreparationError("模拟续期会访问 CA 和修改验证 TXT，需要明确确认。")
         with self.prep._lock():
+            self.prep._reinstall_gate()
             spec = self._version(spec)
             record = self.prep._read_record("activation-ready")
             if record.get("binding") != _binding(spec):

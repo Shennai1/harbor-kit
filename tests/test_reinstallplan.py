@@ -74,7 +74,7 @@ class ReinstallPlanTests(unittest.TestCase):
     def blocked(self, result=None, reason=None):
         result = self.check() if result is None else result
         self.assertEqual(result['result'], 'blocked-preserve-all', result)
-        for key in ('host_changes_attempted', 'report_saved', 'reinstall_ready', 'reinstall_authorized', 'reinstall_implemented'):
+        for key in ('host_changes_attempted', 'report_saved', 'reinstall_ready', 'reinstall_authorized'):
             self.assertIs(result[key], False, result)
         self.assertTrue(result['all_assets_preserved'])
         if reason:
@@ -85,7 +85,8 @@ class ReinstallPlanTests(unittest.TestCase):
         report = self.check()
         self.assertEqual(report['result'], SUCCESS, report)
         self.assertEqual(report['current_state'], 'uninstalled-local-checks-passed')
-        for key in ('reinstall_ready', 'reinstall_implemented', 'reinstall_authorized', 'apt_indexes_refreshed'):
+        self.assertTrue(report['reinstall_implemented'])
+        for key in ('reinstall_ready', 'reinstall_authorized', 'apt_indexes_refreshed'):
             self.assertFalse(report[key])
 
     def test_no_file_service_rule_or_history_changes(self):
