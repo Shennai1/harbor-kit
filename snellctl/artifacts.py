@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
 import hashlib
 import http.client
 import io
@@ -19,44 +18,11 @@ import urllib.request
 import zipfile
 import zlib
 
-from .deployment import SNELL_VERSION, SHADOWTLS_VERSION
+from .releases import Artifact, CATALOG, compare_versions
 
 
 class ArtifactError(Exception):
     """Messages are fixed strings, never server responses or signed redirect URLs."""
-
-
-@dataclass(frozen=True)
-class Artifact:
-    name: str
-    version: str
-    url: str
-    sha256: str
-    filename: str
-    binary: str
-    archive: bool
-    max_download: int
-    max_binary: int
-    redirect_hosts: tuple[str, ...]
-
-
-CATALOG = (
-    Artifact(
-        "snell", SNELL_VERSION,
-        "https://dl.nssurge.com/snell/snell-server-v5.0.1-linux-amd64.zip",
-        "9bea1c2b9e35b73b31634856c04d18c393072b9e5dcde6a32781d8b8f908c539",
-        "snell.zip", "snell-server", True, 8 * 1024**2, 32 * 1024**2,
-        ("dl.nssurge.com",),
-    ),
-    Artifact(
-        "shadow-tls", SHADOWTLS_VERSION,
-        "https://github.com/ihciah/shadow-tls/releases/download/v0.2.25/"
-        "shadow-tls-x86_64-unknown-linux-musl",
-        "a173f5f2d57f45211b68e10ceeddc15b1791077b914fa89747bc705fddc71532",
-        "shadow-tls", "shadow-tls", False, 32 * 1024**2, 32 * 1024**2,
-        ("github.com", "release-assets.githubusercontent.com", "objects.githubusercontent.com"),
-    ),
-)
 
 
 def catalog_report() -> dict:
@@ -240,6 +206,14 @@ def fetch(directory: Path, *, downloader=download) -> dict:
 
 
 def run(args) -> int:
+    if args.artifact_action == "compare":
+        try:
+            report = compare_versions(args.component, args.current, args.target)
+        except ValueError:
+            print("组件或版本格式不受支持；原始输入未显示，未执行任何变更。")
+            return 2
+        print(json.dumps(report, ensure_ascii=False, indent=2))
+        return 0 if report["decision"] == "same-reviewed-version-no-action" else 1
     try:
         if args.artifact_action == "list":
             print(json.dumps(catalog_report(), ensure_ascii=False, indent=2))

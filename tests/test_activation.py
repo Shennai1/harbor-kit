@@ -178,6 +178,25 @@ class ActivationTests(unittest.TestCase):
             self.activate()
         self.assertFalse(self.host.path("/opt/snellctl").exists())
 
+    def assert_version_rejected_before_services(self, path, output):
+        self.host.local_override = lambda c: Reply(0, output) if c.argv == (path, "--version") else None
+        with self.assertRaises(PreparationError):
+            self.activate()
+        self.assertTrue(self.host.path(STATE + "/activation-intent.json").is_file())
+        self.assertFalse(self.host.path(STATE + "/activation-ready.json").exists())
+        self.assertFalse(self.host.path(self.spec.node_dir + "/snell.conf").exists())
+        self.assertEqual(self.host.active, set())
+        self.assertFalse(any(c.argv[:2] == ("systemctl", "start") for c in self.host.calls))
+
+    def test_snell_version_prefix_is_not_the_pinned_version(self):
+        self.assert_version_rejected_before_services(SNELL_BINARY, "snell-server v5.0.10\n")
+
+    def test_shadow_version_suffix_is_not_the_pinned_version(self):
+        self.assert_version_rejected_before_services(SHADOWTLS_BINARY, "shadow-tls 0.2.25-rc1\n")
+
+    def test_conflicting_version_markers_stop_activation(self):
+        self.assert_version_rejected_before_services(SNELL_BINARY, "snell-server v5.0.1\nsnell-server v6.0.0\n")
+
     def test_extra_service_dropin_rejected(self):
         self.host.path("/etc/systemd/system/nginx.service.d").mkdir()
         with self.assertRaises(PreparationError):

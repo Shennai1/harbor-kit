@@ -51,7 +51,16 @@ Nginx，完成自有域名 HTTPS 环境的部署与 SSH 中文菜单管理。
 不联网、不查询最新版本、不读取 CF Token 或证书材料、不升级或重启，不安装快捷指令。
 读取节点配置作内存核验，但不输出密钥；发现差异只报告待核查，不修复。
 当前仍无组件升级执行入口，盘点通过不代表版本最新、安全或可以升级。
-范围、结果及限制见 [组件维护只读盘点](docs/component-maintenance.md)，尚待独立实机验收。
+范围、结果及限制见 [组件维护只读盘点](docs/component-maintenance.md)；
+完整受管 Debian 13 / amd64 重装后的一次正常盘点已取得用户通过反馈，不代表升级或其他平台验收。
+
+版本元数据已集中管理，并新增 `artifacts compare` 离线比较，显式区分同版本、未审核版本、
+降级和 Snell 协议大版本迁移；不会据网页的 latest 或输入版本自动下载/安装。
+当前仍无实际更新或记录迁移能力，见 [组件更新边界](docs/component-updates.md)。
+
+另有独立的实验入口 `package-update-plan --experimental`：确认后联网下载官方索引、
+写入独立检查缓存并模拟四个 Debian 组件及依赖变化，不安装、不升级、不启停服务。
+这不是纯只读，尚待实机验收；不接入菜单。边界见 [Debian 更新方案检查](docs/package-update-plan.md)。
 
 ## 获取源码
 
@@ -73,6 +82,7 @@ python3 -m snellctl cleanup-plan --json
 python3 -m snellctl plan --domain node.example.net
 python3 -m snellctl plan --domain node.example.net --node second --public-port 24443 --snell-port 32001 --tls-port 32443 --json
 python3 -m snellctl artifacts list
+python3 -m snellctl artifacts compare --component snell --current 5.0.1 --target 5.0.1
 python3 -m snellctl preflight --domain node.example.net
 python3 -m unittest discover -s tests -v
 ```

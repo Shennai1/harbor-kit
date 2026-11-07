@@ -14,6 +14,7 @@ import re
 import time
 
 from .artifacts import CATALOG, verify
+from .releases import BASELINES
 from .deployment import (
     SNELL_BINARY, SHADOWTLS_BINARY, NodeSpec, file_targets, new_node_secrets, render_files,
 )
@@ -222,9 +223,9 @@ class Activation:
                     with self.files.directory(str(Path(path).parent), create=True):
                         pass
                     self.files.write_new(path, data, 0o755)
-                for path, pattern in ((SNELL_BINARY, r"\bsnell-server v5\.0\.1(?:\s|$)"),
-                                      (SHADOWTLS_BINARY, r"\bshadow-tls 0\.2\.25(?:\s|$)")):
-                    if not re.search(pattern, self.prep._run([path, "--version"], 5, capture_stderr=True)):
+                for program in BASELINES:
+                    output = self.prep._run([program.binary_path, "--version"], 5, capture_stderr=True)
+                    if not program.matches_version_output(output):
                         raise PreparationError("程序报告的版本不符合固定版本。")
                 for path in ("/etc/snellctl/nodes", spec.node_dir):
                     self.files.private_directory_new(path)

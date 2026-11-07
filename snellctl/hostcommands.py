@@ -12,7 +12,7 @@ import tempfile
 
 from .doctor import os_release
 from .hostprep import Command, PreparationError, Reply
-from .deployment import SNELL_BINARY, SHADOWTLS_BINARY
+from .releases import BASELINES, VERSION_COMMANDS
 
 
 PROGRAMS = {name: "/usr/bin/" + name for name in (
@@ -20,8 +20,8 @@ PROGRAMS = {name: "/usr/bin/" + name for name in (
 )}
 PROGRAMS.update({"nginx": "/usr/sbin/nginx", "ss": "/usr/bin/ss",
                  "ufw": "/usr/sbin/ufw",
-                 "iptables": "/usr/sbin/iptables", "ip6tables": "/usr/sbin/ip6tables",
-                 SNELL_BINARY: SNELL_BINARY, SHADOWTLS_BINARY: SHADOWTLS_BINARY})
+                 "iptables": "/usr/sbin/iptables", "ip6tables": "/usr/sbin/ip6tables"})
+PROGRAMS.update({program.binary_path: program.binary_path for program in BASELINES})
 
 
 class DebianCommands:
@@ -42,28 +42,41 @@ class DebianCommands:
                 or command.argv[0] not in PROGRAMS or not 0 < command.timeout <= 900
                 or command.env != Command(("unused",)).env):
             raise PreparationError("拒绝不受支持的系统命令或环境。")
-        if command.argv[0] in {SNELL_BINARY, SHADOWTLS_BINARY} and command.argv[1:] != ("--version",):
+        if command.argv[0].startswith("/opt/snellctl/") and command.argv not in VERSION_COMMANDS:
             raise PreparationError("直接运行节点程序只允许版本检查。")
         if command.argv[0] in {"iptables", "ip6tables"}:
             chain = "ufw-user-input" if command.argv[0] == "iptables" else "ufw6-user-input"
             if command.argv[1:] not in {("-S", "INPUT"), ("-S", chain)}:
                 raise PreparationError("内核规则工具仅允许读取指定链，不允许修改。")
-        capture_allowed = (command.argv in {("nginx", "-v"), (SNELL_BINARY, "--version"), (SHADOWTLS_BINARY, "--version")}
+        from .aptreview import AptReviewCommand
+        review = isinstance(command, AptReviewCommand)
+        if review:
+            from .hostprep import HostFiles
+            files = HostFiles(Path("/"))
+            try:
+                command.verify_files(files)
+            finally:
+                files.close()
+        capture_allowed = (command.argv == ("nginx", "-v") or command.argv in VERSION_COMMANDS
                            or (command.argv[:2] == ("certbot", "renew") and "--dry-run" in command.argv)
                            or (command.argv[:2] == ("certbot", "certonly") and "--dns-cloudflare" in command.argv
                                and "--non-interactive" in command.argv and "--no-directory-hooks" in command.argv)
                            or (command.argv[:2] == ("certbot", "delete") and "--cert-name" in command.argv
-                               and "--non-interactive" in command.argv and "--no-directory-hooks" in command.argv))
+                               and "--non-interactive" in command.argv and "--no-directory-hooks" in command.argv)
+                           or review)
         if type(command.capture_stderr) is not bool or (command.capture_stderr and not capture_allowed):
             raise PreparationError("仅版本检查及受限证书操作允许内部捕获错误输出。")
         args = [PROGRAMS[command.argv[0]], *command.argv[1:]]
+        environment = dict(command.env)
+        if review:
+            environment["APT_CONFIG"] = command.workspace + "/apt.conf"
         try:
             # Anonymous local output avoids pipe deadlocks and unbounded RAM capture.
             with tempfile.TemporaryFile() as output:
                 with subprocess.Popen(
                     args, stdin=subprocess.DEVNULL, stdout=output,
                     stderr=output if command.capture_stderr else subprocess.DEVNULL,
-                    env=dict(command.env), cwd="/", start_new_session=True, umask=0o077,
+                    env=environment, cwd="/", start_new_session=True, umask=0o077,
                 ) as process:
                     try:
                         process.wait(timeout=command.timeout)

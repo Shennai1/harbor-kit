@@ -14,6 +14,7 @@ from .activation import BINARIES
 from .deployment import NodeSecrets, NodeSpec, file_targets, render_files
 from .hostprep import Preparation, read_owned_files
 from .installer import Terminal, confirm
+from .releases import baseline
 
 
 class ClientError(Exception):
@@ -34,8 +35,10 @@ class ClientData:
 
     def surge_line(self, address):
         address = public_ipv4(address)
-        return (f"snellctl-main = snell, {address}, {self.public_port}, psk={self.keys.psk}, version=5, "
-                f"shadow-tls-password={self.keys.shadowtls_password}, shadow-tls-version=3, "
+        return (f"snellctl-main = snell, {address}, {self.public_port}, psk={self.keys.psk}, "
+                f"version={baseline('snell').protocol}, "
+                f"shadow-tls-password={self.keys.shadowtls_password}, "
+                f"shadow-tls-version={baseline('shadow-tls').protocol}, "
                 f"shadow-tls-sni={self.domain}, block-quic=on")
 
 

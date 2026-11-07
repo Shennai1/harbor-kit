@@ -62,6 +62,8 @@ def main(argv: list[str] | None = None) -> int:
     commands.add_parser("uninstall-plan", help="只读核查完整受管 main 的卸载范围；不卸载、不生成删除命令")
     commands.add_parser("reinstall-plan", help="只读核查成功卸载后的 main；保留历史，不执行重装")
     commands.add_parser("maintenance-plan", help="只读盘点受管组件版本、记录及来源模板；不升级或查询最新版本")
+    package_plan = commands.add_parser("package-update-plan", help="联网检查官方 Debian 候选和依赖；写独立缓存，不升级")
+    package_plan.add_argument("--experimental", action="store_true", help="明确开启未实机验收的检查，仍需交互确认")
     reinstall = commands.add_parser("reinstall", help="实验版：已成功卸载 main 的受控重装，保留历史并生成新密钥")
     reinstall.add_argument("--experimental", action="store_true", help="允许重装核查，仍需交互确认及现场复查")
     uninstall = commands.add_parser("uninstall", help="实验版受管 main 卸载；停止节点、保留软件包及历史，须独立确认")
@@ -85,6 +87,10 @@ def main(argv: list[str] | None = None) -> int:
     artifacts = commands.add_parser("artifacts", help="固定版本官方程序清单与下载暂存；不执行程序")
     artifact_actions = artifacts.add_subparsers(dest="artifact_action", required=True)
     artifact_actions.add_parser("list", help="离线显示固定来源及基线指纹")
+    compare = artifact_actions.add_parser("compare", help="离线比较显式版本，不查主机、不下载、不升级")
+    compare.add_argument("--component", required=True, help="snell 或 shadow-tls")
+    compare.add_argument("--current", required=True, help="显式当前版本；不代表已核对主机")
+    compare.add_argument("--target", required=True, help="显式目标版本；不接受 latest 或自定义下载地址")
     fetch = artifact_actions.add_parser("fetch", help="联网下载并校验，只写入新的暂存目录")
     fetch.add_argument("--output", required=True, help="新目录的绝对路径；父目录须存在且不能含符号链接")
     sandbox = commands.add_parser("sandbox", help="开发用离线文件事务；仅写入明确初始化的独立测试目录")
@@ -139,6 +145,12 @@ def main(argv: list[str] | None = None) -> int:
     if args.command == "maintenance-plan":
         from .maintenance import run_maintenance
         return run_maintenance()
+    if args.command == "package-update-plan":
+        if not args.experimental:
+            print("联网更新方案检查需要 --experimental 和交互确认，不执行升级。", file=sys.stderr)
+            return 2
+        from .packageplan import run_package_plan
+        return run_package_plan()
     if args.command == "reinstall":
         if not args.experimental:
             print("受控重装需要 --experimental；仅限成功卸载的 main，仍需交互核查和确认。", file=sys.stderr)

@@ -5,11 +5,13 @@ import json
 import re
 import secrets
 
+from .releases import baseline
 
-SNELL_VERSION = "5.0.1"
-SHADOWTLS_VERSION = "0.2.25"
-SNELL_BINARY = f"/opt/snellctl/snell/{SNELL_VERSION}/snell-server"
-SHADOWTLS_BINARY = f"/opt/snellctl/shadow-tls/{SHADOWTLS_VERSION}/shadow-tls"
+
+SNELL_VERSION = baseline("snell").artifact.version
+SHADOWTLS_VERSION = baseline("shadow-tls").artifact.version
+SNELL_BINARY = baseline("snell").binary_path
+SHADOWTLS_BINARY = baseline("shadow-tls").binary_path
 LABEL = r"[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?"
 
 
@@ -193,7 +195,8 @@ def preview(spec: NodeSpec) -> dict:
         "node": spec.node, "domain": spec.domain,
         "validated_platform": "Debian 13 / amd64 / IPv4 TCP",
         "versions": {"snell": SNELL_VERSION, "shadowtls": SHADOWTLS_VERSION,
-                     "snell_protocol": 5, "shadowtls_protocol": 3,
+                     "snell_protocol": baseline("snell").protocol,
+                     "shadowtls_protocol": baseline("shadow-tls").protocol,
                      "nginx_syntax": spec.nginx_version},
         "listeners": {"shadowtls_tcp": f"0.0.0.0:{spec.public_port}",
                       "snell_tcp_udp": f"127.0.0.1:{spec.snell_port}",

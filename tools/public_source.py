@@ -33,6 +33,8 @@ PUBLIC_FILES = (
     "snellctl/reinstallplan.py", "tests/test_reinstallplan.py", "docs/reinstall-plan.md",
     "snellctl/reinstall.py", "tests/test_reinstall.py", "docs/reinstall.md",
     "snellctl/maintenance.py", "tests/test_maintenance.py", "docs/component-maintenance.md",
+    "snellctl/releases.py", "tests/test_releases.py", "docs/component-updates.md",
+    "snellctl/aptreview.py", "snellctl/packageplan.py", "tests/test_packageplan.py", "docs/package-update-plan.md",
 )
 SENSITIVE = (
     re.compile(r"-----BEGIN (?:RSA |EC |OPENSSH |ENCRYPTED )?PRIVATE KEY-----"),
