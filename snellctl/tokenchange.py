@@ -153,6 +153,10 @@ class TokenChange:
         self.public._validate_node(spec, record["ssh_port"])
         self.public._public_health(spec, record)
         self._idle()
+        return self._evidence(spec, record)
+
+    def _evidence(self, spec, record):
+        """Snapshot only; callers must separately gate pending work and health."""
         with self.files.directory("/etc/snellctl/credentials", private=True):
             pass
         path = self.prep.credential_path(spec)

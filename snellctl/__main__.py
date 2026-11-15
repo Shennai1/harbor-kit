@@ -64,6 +64,9 @@ def main(argv: list[str] | None = None) -> int:
     commands.add_parser("maintenance-plan", help="只读盘点受管组件版本、记录及来源模板；不升级或查询最新版本")
     package_plan = commands.add_parser("package-update-plan", help="联网检查官方 Debian 候选和依赖；写独立缓存，不升级")
     package_plan.add_argument("--experimental", action="store_true", help="明确开启未实机验收的检查，仍需交互确认")
+    package_review = commands.add_parser("package-update-review", help="联网生成升级包审查材料；仅下载和受限保存，不安装",
+                                         description="收集升级包审查材料；只检查、下载和受限保存，不安装、不停止服务。")
+    package_review.add_argument("--experimental", action="store_true", help="明确开启未实机验收的材料收集，仍需分别确认")
     reinstall = commands.add_parser("reinstall", help="实验版：已成功卸载 main 的受控重装，保留历史并生成新密钥")
     reinstall.add_argument("--experimental", action="store_true", help="允许重装核查，仍需交互确认及现场复查")
     uninstall = commands.add_parser("uninstall", help="实验版受管 main 卸载；停止节点、保留软件包及历史，须独立确认")
@@ -151,6 +154,12 @@ def main(argv: list[str] | None = None) -> int:
             return 2
         from .packageplan import run_package_plan
         return run_package_plan()
+    if args.command == "package-update-review":
+        if not args.experimental:
+            print("包内容审查需要 --experimental 和交互确认；不执行升级。", file=sys.stderr)
+            return 2
+        from .packageinspection import run_package_review
+        return run_package_review()
     if args.command == "reinstall":
         if not args.experimental:
             print("受控重装需要 --experimental；仅限成功卸载的 main，仍需交互核查和确认。", file=sys.stderr)

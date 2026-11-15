@@ -1,7 +1,8 @@
 # Debian 更新方案检查
 
 `package-update-plan --experimental` 是交互式检查入口，不是升级执行器。
-仅限本工具完整受管的 Debian 13 / amd64 / main。当前只完成本地测试，尚待 Debian 实机验收；
+仅限本工具完整受管的 Debian 13 / amd64 / main。已收到一次无变更分支的 Debian 实机通过反馈，
+存在升级或新增依赖的实机分支尚未验收；
 不接入菜单、不安装快捷指令，也不改变已有新机安装路径。
 
 ## 授权范围
@@ -17,6 +18,7 @@ python3 -E -s -B -m snellctl package-update-plan --experimental
 ```
 
 没有升级执行入口，不能将报告当作稍后直接安装的授权或固定方案。
+内部更新基础的实现范围见[受控更新说明](package-update-execution.md)，不改变本检查的权限或行为。
 
 ## 检查过程
 

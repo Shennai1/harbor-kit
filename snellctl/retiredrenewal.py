@@ -37,6 +37,7 @@ class RetiredRenewal:
 
     def _check(self, *, restored=False):
         self._phase("pending-cleanup-records")
+        self.prep._package_update_gate()
         for name in ("key-rotation-intent", "port-change-intent", "token-change-intent", "domain-change-intent"):
             _require(not self.prep._exists(name), "other-change-pending")
         marker_path = STATE + "/" + INTENT + ".json"

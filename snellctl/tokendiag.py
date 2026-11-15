@@ -120,6 +120,7 @@ class TokenDiagnostic:
         # Shared by diagnostics and the separately gated completion command.
         # Callers must hold the preparation lock and validate their own records.
         self._phase("pending-state-check")
+        self.prep._package_update_gate()
         for name in ("key-rotation-intent", "port-change-intent", "domain-change-intent", "retired-cleanup-intent"):
             if self.prep._exists(name):
                 raise PreparationError("有其他未完成变更，保留现场。")

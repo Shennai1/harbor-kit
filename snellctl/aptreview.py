@@ -38,6 +38,11 @@ def package_ok(value):
 
 def configuration(path):
     require(workspace_ok(path))
+    return _configuration(path)
+
+
+def _configuration(path, *, extended_states=None):
+    """Shared template; callers validate their own fixed cache namespace first."""
     # APT_CONFIG is read BEFORE system fragments; -o/-c would be too late.
     options = {
         "Dir::Etc": path + "/etc",
@@ -52,7 +57,7 @@ def configuration(path):
         "Dir::State": path + "/state",
         "Dir::State::lists": path + "/lists",
         "Dir::State::status": "/var/lib/dpkg/status",
-        "Dir::State::extended_states": path + "/state/extended_states",
+        "Dir::State::extended_states": extended_states or path + "/state/extended_states",
         "Dir::Cache": path + "/cache",
         "Dir::Cache::archives": path + "/cache/archives",
         "Dir::Cache::pkgcache": "",
@@ -81,12 +86,17 @@ def configuration(path):
 
 def prepare(files, path):
     require(workspace_ok(path) and files.info(path) is None)
+    _prepare(files, path, configuration(path))
+
+
+def _prepare(files, path, content):
+    require(files.info(path) is None)
     # Only public index/config data live here. Traversability preserves _apt sandboxing.
     for part in (path, path + "/etc", path + "/state", path + "/lists", path + "/cache",
                  path + "/cache/archives", path + "/log", *(path + "/etc/" + d for d in EMPTY_DIRS)):
         with files.directory(part, create=True):
             pass
-    files.write_new(path + "/apt.conf", configuration(path), mode=0o644)
+    files.write_new(path + "/apt.conf", content, mode=0o644)
     files.write_new(path + "/etc/debian.sources", SOURCES, mode=0o644)
     for name in EMPTY_FILES:
         files.write_new(path + "/etc/" + name, b"", mode=0o644)
@@ -114,14 +124,18 @@ class AptReviewCommand(Command):
 
     def verify_files(self, files):
         self.validate()
-        require(files.read(self.workspace + "/apt.conf", mode=0o644) == configuration(self.workspace))
-        require(files.read(self.workspace + "/etc/debian.sources", mode=0o644) == SOURCES)
-        for name in EMPTY_FILES:
-            require(files.read(self.workspace + "/etc/" + name, mode=0o644) == b"")
-        import os
-        for name in EMPTY_DIRS:
-            with files.directory(self.workspace + "/etc/" + name) as fd:
-                require(not os.listdir(fd))
+        _verify_files(files, self.workspace, configuration(self.workspace))
+
+
+def _verify_files(files, path, content):
+    require(files.read(path + "/apt.conf", mode=0o644) == content)
+    require(files.read(path + "/etc/debian.sources", mode=0o644) == SOURCES)
+    for name in EMPTY_FILES:
+        require(files.read(path + "/etc/" + name, mode=0o644) == b"")
+    import os
+    for name in EMPTY_DIRS:
+        with files.directory(path + "/etc/" + name) as fd:
+            require(not os.listdir(fd))
 
 
 def candidates(output, installed):

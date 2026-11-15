@@ -16,7 +16,7 @@ from .releases import BASELINES, VERSION_COMMANDS
 
 
 PROGRAMS = {name: "/usr/bin/" + name for name in (
-    "apt-get", "apt-cache", "dpkg", "dpkg-query", "systemctl", "certbot", "openssl", "systemd-analyze",
+    "apt-get", "apt-cache", "dpkg", "dpkg-query", "dpkg-deb", "systemctl", "certbot", "openssl", "systemd-analyze",
 )}
 PROGRAMS.update({"nginx": "/usr/sbin/nginx", "ss": "/usr/bin/ss",
                  "ufw": "/usr/sbin/ufw",
@@ -49,8 +49,22 @@ class DebianCommands:
             if command.argv[1:] not in {("-S", "INPUT"), ("-S", chain)}:
                 raise PreparationError("内核规则工具仅允许读取指定链，不允许修改。")
         from .aptreview import AptReviewCommand
+        from .packagedownload import ArchiveCommand, DownloadCommand, InstallSimulationCommand
+        from .packagecontents import ContentsCommand, inspect_command
+        if type(command) is ContentsCommand:
+            from .hostprep import HostFiles
+            files = HostFiles(Path("/"))
+            try:
+                return inspect_command(command, files, self._stop)
+            finally:
+                files.close()
         review = isinstance(command, AptReviewCommand)
-        if review:
+        download = type(command) is DownloadCommand
+        archive = type(command) is ArchiveCommand
+        install_simulation = type(command) is InstallSimulationCommand
+        if command.argv[0] == "dpkg-deb" and not archive:
+            raise PreparationError("Package archive queries require the restricted staging command.")
+        if review or download or archive or install_simulation:
             from .hostprep import HostFiles
             files = HostFiles(Path("/"))
             try:
@@ -63,13 +77,15 @@ class DebianCommands:
                                and "--non-interactive" in command.argv and "--no-directory-hooks" in command.argv)
                            or (command.argv[:2] == ("certbot", "delete") and "--cert-name" in command.argv
                                and "--non-interactive" in command.argv and "--no-directory-hooks" in command.argv)
-                           or review)
+                           or review or download or install_simulation)
         if type(command.capture_stderr) is not bool or (command.capture_stderr and not capture_allowed):
             raise PreparationError("仅版本检查及受限证书操作允许内部捕获错误输出。")
         args = [PROGRAMS[command.argv[0]], *command.argv[1:]]
         environment = dict(command.env)
-        if review:
+        if review or download:
             environment["APT_CONFIG"] = command.workspace + "/apt.conf"
+        elif install_simulation:
+            environment["APT_CONFIG"] = command.job.apt_config
         try:
             # Anonymous local output avoids pipe deadlocks and unbounded RAM capture.
             with tempfile.TemporaryFile() as output:

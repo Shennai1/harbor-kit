@@ -307,7 +307,12 @@ class Preparation:
         if self._exists("token-change-intent"):
             raise PreparationError("有未确认完成的 Token 更换；保留凭据及续期状态，不重试或导出配置。")
 
+    def _package_update_gate(self):
+        if self._exists("package-update-intent"):
+            raise PreparationError("有未确认完成的软件包更新；可能仍在后台运行。保留保护及记录，不重试、重启或执行其他管理变更。")
+
     def _reinstall_gate(self):
+        self._package_update_gate()
         if self._exists("reinstall-intent"):
             raise PreparationError("有未确认完成的重装；保留历史和现场，不重跑安装、接续或导出配置。")
 
@@ -497,6 +502,7 @@ class Preparation:
                     "token_change": "needs-inspection" if self._exists("token-change-intent") else "none-pending",
                     "domain_change": "needs-inspection" if self._exists("domain-change-intent") else "none-pending",
                     "retired_cleanup": "needs-inspection" if self._exists("retired-cleanup-intent") else "none-pending",
+                    "package_update": "needs-inspection" if self._exists("package-update-intent") else "none-pending",
                     "deploy_ready": False, "renewal_enabled_by_this_engine":
                         self._exists("renewal-enable-ready") and uninstall != "completion-recorded" and not self._exists("reinstall-intent"),
                     "current_service_health": "not-checked"}

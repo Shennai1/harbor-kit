@@ -20,7 +20,7 @@ from .uninstall import COMPLETE, GONE_FIELDS, SUCCESS as UNINSTALL_SUCCESS
 
 SUCCESS = "reinstall-scope-checked-no-changes"
 PENDING = ("reinstall-intent", "uninstall-intent", "retired-cleanup-intent", "domain-change-intent",
-           "key-rotation-intent", "port-change-intent", "token-change-intent")
+           "key-rotation-intent", "port-change-intent", "token-change-intent", "package-update-intent")
 PACKAGE_QUERY = ("dpkg-query", "-W", "-f=${Package}\t${db:Status-Abbrev}\t${Version}\n", *DEPENDENCIES)
 GONE = {"LoadState": "not-found", "ActiveState": "inactive", "SubState": "dead", "MainPID": "0", "Job": ""}
 NODE_UNITS = ("snellctl-snell-main.service", "snellctl-shadowtls-main.service")

@@ -201,9 +201,13 @@ class PublishedBaselineCompatibilityTests(unittest.TestCase):
                     self.assertEqual(hashlib.sha256(content).hexdigest(), expected)
 
     def test_existing_catalog_and_command_allowlist_unchanged(self):
+        # The staging extension adds one separately guarded read-only program;
+        # the original catalog and every existing executable mapping stay exact.
+        self.assertEqual(PROGRAMS.get("dpkg-deb"), "/usr/bin/dpkg-deb")
+        original_programs = {name: path for name, path in PROGRAMS.items() if name != "dpkg-deb"}
         for value, expected in (
             (artifacts.catalog_report(), "df44a15f05aa77657128d7d49e5d993e3f69e2679674510101031aaead4605b5"),
-            (PROGRAMS, "c50754f7421b14de7e60eae80197ab422e194c8d445e2309d4f46009057c557a"),
+            (original_programs, "c50754f7421b14de7e60eae80197ab422e194c8d445e2309d4f46009057c557a"),
         ):
             self.assertEqual(hashlib.sha256(json.dumps(value, sort_keys=True).encode()).hexdigest(), expected)
 

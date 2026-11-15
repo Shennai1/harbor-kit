@@ -82,6 +82,7 @@ class ReinstallPreparation(Preparation):
                 yield
 
     def _reinstall_gate(self):
+        self._package_update_gate()
         if self._exists(INTENT):
             _require(self._lease_thread == threading.get_ident() and self._authorized_intent is not None)
             identity, content = self._authorized_intent

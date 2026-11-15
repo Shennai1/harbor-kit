@@ -313,6 +313,8 @@ def render_status(report):
             lines.append("域名更换：未确认完成；保留新旧证书、凭据及日志，核查当前 SNI 和续期状态，不重试或删除记录。")
         if report.get("retired_cleanup") == "needs-inspection":
             lines.append("旧域名清理：未确认完成；文件可能已部分删除、自动续期可能停用，保留现场，不重试或删除标记。")
+        if report.get("package_update") == "needs-inspection":
+            lines.append("软件包更新：未确认完成；任务可能仍在后台运行，节点或续期可能停用。不要重试、重启、解除保护或删除标记。")
         if report.get("uninstall") == "needs-inspection":
             lines.append("节点卸载：未确认完成；节点及续期可能停用、资源可能部分删除，不重试、重启或删除标记。")
         elif report.get("uninstall") == "completion-recorded":
@@ -328,6 +330,7 @@ def render_status(report):
                 and report.get("token_change") != "needs-inspection"
                 and report.get("domain_change") != "needs-inspection"
                 and report.get("retired_cleanup") != "needs-inspection"
+                and report.get("package_update") != "needs-inspection"
                 and report.get("uninstall", "none-recorded") == "none-recorded"):
             lines.append("记录符合受限接续候选阶段；可使用 resume --experimental 先复查现场，不代表已经允许开放。")
     lines.append("报告不含域名、IP、Token、密钥或原始日志；不会自动恢复、签发或删除任何文件。")
