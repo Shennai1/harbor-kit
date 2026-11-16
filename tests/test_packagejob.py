@@ -71,10 +71,9 @@ class JobSpecificationTests(unittest.TestCase):
             with self.subTest(changes=changes), self.assertRaises(PreparationError):
                 JobSpec('a' * 32, changes)
 
-    def test_upgrader_not_exposed_in_cli(self):
-        with redirect_stderr(io.StringIO()), self.assertRaises(SystemExit) as result:
-            main(['package-update', '--experimental'])
-        self.assertEqual(result.exception.code, 2)
+    def test_upgrader_requires_explicit_experimental_gate(self):
+        with redirect_stderr(io.StringIO()):
+            self.assertEqual(main(['package-update']), 2)
 
 
 class JobObservationTests(unittest.TestCase):

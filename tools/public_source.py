@@ -45,6 +45,9 @@ PUBLIC_FILES = (
     "snellctl/packagecontents.py", "snellctl/packagereview.py", "snellctl/packageprompts.py",
     "tests/test_packagereview.py", "tests/test_packageinteraction.py",
     "snellctl/packageinspection.py", "tests/test_packageinspection.py", "docs/package-review.md",
+    "snellctl/packagematerial.py", "snellctl/packageupdate.py", "snellctl/packagestatus.py",
+    "tests/test_packageupdate.py", "tests/test_packagestatus.py", "docs/package-update.md",
+    "snellctl/packageresume.py", "tests/test_packageresume.py", "docs/package-update-resume.md",
 )
 SENSITIVE = (
     re.compile(r"-----BEGIN (?:RSA |EC |OPENSSH |ENCRYPTED )?PRIVATE KEY-----"),

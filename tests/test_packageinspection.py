@@ -460,10 +460,9 @@ class EntryTests(unittest.TestCase):
                 main(['package-update-review', '--experimental', *args])
             self.assertNotIn(PRIVATE, out.getvalue())
 
-    def test_no_installation_command_is_exposed(self):
-        for name in ('package-update', 'package-update-resume', 'upgrade'):
-            with redirect_stderr(io.StringIO()), self.assertRaises(SystemExit):
-                main([name, '--experimental'])
+    def test_no_generic_upgrade_command_is_exposed(self):
+        with redirect_stderr(io.StringIO()), self.assertRaises(SystemExit):
+            main(['upgrade', '--experimental'])
 
     def test_noninteractive_refuses_before_factory_or_queries(self):
         ui, factory = Console(), Mock()

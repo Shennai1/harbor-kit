@@ -143,6 +143,20 @@ class StagedFlowTests(unittest.TestCase):
         self.assertEqual(report['result'], 'cancelled-before-download')
         self.fixture.download.assert_not_called()
 
+    def test_optional_review_binding_runs_before_and_inside_guards(self):
+        checks = []
+        def check(material):
+            checks.append(self.prep._exists('package-update-intent'))
+            self.assertIs(material, self.reviewed[0])
+            return True
+        self.assertEqual(self.run_flow(review_check=check)['result'], 'packages-restored-external-test-required')
+        self.assertEqual(checks, [False, True])
+
+    def test_truthy_review_binding_does_not_authorize_installation(self):
+        report = self.run_flow(review_check=lambda material: 'yes')
+        self.assertFalse(report['maintenance_attempted'])
+        self.assertEqual(self.fixture.mutations(), [])
+
     def test_batch_for_another_job_is_not_presented_as_this_review(self):
         self.fixture.download.return_value = replace(self.fixture.batch, job=replace(self.job, job_id='f' * 32))
         report = self.run_flow()

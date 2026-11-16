@@ -1,8 +1,9 @@
 """Internal update coordinator and narrowly gated post-install continuation.
 
-No CLI, default live runner, automatic module/script approval, reboot recovery
-or installation retry. Reconnect can only enter restoration before its first
-attempt, after the original background invocation has certainly succeeded.
+No default live runner, automatic module/script approval, reboot recovery or
+installation retry. The separate operator adapter supplies staged approvals.
+Reconnect can only enter restoration before its first attempt, after the
+original background invocation has certainly succeeded.
 """
 
 import json
@@ -58,14 +59,16 @@ class PackageFlow:
         return self._run(job, review=review, decision=lambda stage: True, verify_review=lambda: None,
                          wait_budget=wait_budget)
 
-    def run_staged(self, job, *, review, confirm, wait_budget=120):
+    def run_staged(self, job, *, review, confirm, review_check=None, wait_budget=120):
         """Internal staged interface; independent material review cannot default to yes.
 
         `review` receives bounded local-only ReviewMaterial, not a plan or hash.
         `confirm` receives a fixed stage identifier. Only exact True proceeds.
-        No default live adapter, CLI, saved approval or automatic retry exists.
+        An operator adapter can additionally bind the saved material it showed;
+        that check must return exact True before maintenance and submission.
         """
         require(type(job) is JobSpec and callable(review) and callable(confirm)
+                and (review_check is None or callable(review_check))
                 and type(wait_budget) is int and 1 <= wait_budget <= 900)
         material = None
         def review_batch(batch):
@@ -77,6 +80,8 @@ class PackageFlow:
         def verify_review():
             require(material is not None)
             material.verify(self.prep)
+            if review_check is not None:
+                require(review_check(material) is True)
         return self._run(job, review=review_batch, decision=confirm, verify_review=verify_review,
                          wait_budget=wait_budget)
 
@@ -112,6 +117,8 @@ class PackageFlow:
                 self._phase("submit-once")
                 report["submission"] = submit(lease, batch, consent=True, review_confirmed=True)
                 if report["submission"]["result"] != "submitted-postchecks-required":
+                    if report["submission"]["result"] == "interrupted-inspect-only":
+                        report["result"] = "interrupted-inspection-required"
                     return report
                 self._phase("observe-background-install")
                 report["observation"] = JobObserver(job, self.files, self.prep.runner).wait(budget=wait_budget)
@@ -187,6 +194,19 @@ class PackageFlow:
     def resume(self, job, *, confirm_restore=False, confirm_dns_test=False, confirm_renewal=False):
         """One explicit continuation before any restoration attempt, never APT."""
         require(type(job) is JobSpec and all(v is True for v in (confirm_restore, confirm_dns_test, confirm_renewal)))
+        return self._resume(job)
+
+    def resume_staged(self, job, *, confirm):
+        """Inspect before asking; recheck the same approved state before writes."""
+        require(type(job) is JobSpec and callable(confirm))
+        return self._resume(job, decision=confirm)
+
+    def _resume_binding(self, lease, finish):
+        return encoded({"before": baseline.digest(lease.before), "intent": lease.intent,
+                        "owned": lease.owned, "submission": finish.submission, "claim": finish.claim,
+                        "vendor_files": finish.vendor_stamps, "baseline": baseline.read(self.files, lease.job)})
+
+    def _resume(self, job, decision=None):
         report = {"format": 1, "operation": "package-restoration-resume", "result": "inspection-required",
                   "host_changes_attempted": False, "installation_submission_attempted": False,
                   "upgrade_completed": False, "external_acceptance_required": True, "automatic_retry": False,
@@ -195,6 +215,16 @@ class PackageFlow:
         try:
             with self.prep._lock():
                 lease, finish = self._resume_check(job)
+                if decision is not None:
+                    before = self._resume_binding(lease, finish)
+                    self._phase("restoration-confirmation")
+                    if any(decision(stage) is not True for stage in ("restore", "dns-test", "renewal")):
+                        report["result"] = "cancelled-before-restoration-guards-preserved"
+                        return report
+                    lease.active = False
+                    self._phase("confirmed-state-recheck")
+                    lease, finish = self._resume_check(job)
+                    require(self._resume_binding(lease, finish) == before)
                 self._phase("restoration-resume-intent")
                 report["host_changes_attempted"] = True
                 self.files.write_new(job.directory + "/restoration-resume-intent.json", encoded({
@@ -211,11 +241,13 @@ class PackageFlow:
         finally:
             if lease is not None:
                 lease.active = False
-        report["phase"] = self.phase
+            report["phase"] = self.phase
         if started:
             try:
                 report["report_saved"] = True
                 self.files.write_new(job.directory + "/restoration-resume-result.json", encoded(report))
+            except (EOFError, KeyboardInterrupt):
+                report.update(report_saved=False, result="interrupted-inspection-required")
             except (OSError, PreparationError):
                 report["report_saved"] = False
         return report

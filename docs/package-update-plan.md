@@ -17,7 +17,8 @@
 python3 -E -s -B -m snellctl package-update-plan --experimental
 ```
 
-没有升级执行入口，不能将报告当作稍后直接安装的授权或固定方案。
+本命令没有升级执行能力，不能将报告当作稍后直接安装的授权或固定方案。
+实际更新使用[另一实验入口](package-update.md)，必须重新检查、审查并逐项确认。
 内部更新基础的实现范围见[受控更新说明](package-update-execution.md)，不改变本检查的权限或行为。
 
 ## 检查过程

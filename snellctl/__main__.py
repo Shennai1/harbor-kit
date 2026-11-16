@@ -67,6 +67,12 @@ def main(argv: list[str] | None = None) -> int:
     package_review = commands.add_parser("package-update-review", help="联网生成升级包审查材料；仅下载和受限保存，不安装",
                                          description="收集升级包审查材料；只检查、下载和受限保存，不安装、不停止服务。")
     package_review.add_argument("--experimental", action="store_true", help="明确开启未实机验收的材料收集，仍需分别确认")
+    package_update = commands.add_parser("package-update", help="实验版实际包更新；独立审查后分别确认停机、安装及恢复")
+    package_update.add_argument("--experimental", action="store_true", help="允许进入未实机升级验收的交互流程，仍须逐项确认")
+    package_status = commands.add_parser("package-update-status", help="只读查看原更新任务，不重试安装或恢复服务")
+    package_status.add_argument("--json", action="store_true", help="只显示脱敏 JSON，不读取原始日志")
+    package_resume = commands.add_parser("package-update-resume", help="原安装成功且未尝试恢复时，核查后受限恢复；不重试安装")
+    package_resume.add_argument("--experimental", action="store_true", help="开启未实机验收的受限恢复，仍须交互确认")
     reinstall = commands.add_parser("reinstall", help="实验版：已成功卸载 main 的受控重装，保留历史并生成新密钥")
     reinstall.add_argument("--experimental", action="store_true", help="允许重装核查，仍需交互确认及现场复查")
     uninstall = commands.add_parser("uninstall", help="实验版受管 main 卸载；停止节点、保留软件包及历史，须独立确认")
@@ -160,6 +166,21 @@ def main(argv: list[str] | None = None) -> int:
             return 2
         from .packageinspection import run_package_review
         return run_package_review()
+    if args.command == "package-update":
+        if not args.experimental:
+            print("实际包更新需要 --experimental，仍须本轮审查及独立停机、安装和恢复确认。", file=sys.stderr)
+            return 2
+        from .packageupdate import run_package_update
+        return run_package_update()
+    if args.command == "package-update-status":
+        from .packagestatus import run_package_status
+        return run_package_status(json_output=args.json)
+    if args.command == "package-update-resume":
+        if not args.experimental:
+            print("受限恢复需要 --experimental；仅限原安装成功且未开始恢复的现场，不重新安装。", file=sys.stderr)
+            return 2
+        from .packageresume import run_package_resume
+        return run_package_resume()
     if args.command == "reinstall":
         if not args.experimental:
             print("受控重装需要 --experimental；仅限成功卸载的 main，仍需交互核查和确认。", file=sys.stderr)

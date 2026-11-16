@@ -2,18 +2,17 @@
 
 from contextlib import contextmanager
 from dataclasses import asdict
-import hashlib
 import json
 import uuid
 
 from . import aptreview
-from .domaininventory import Inventory
 from .hostprep import Command
 from .installer import Terminal, confirm
 from .maintenance import READ_COMMANDS
 from .packagecontents import ContentsCommand, require
-from .packagedownload import ArchiveCommand, CACHE, DownloadCommand, DownloadedPackages, PackageDownloads, fingerprint
+from .packagedownload import ArchiveCommand, CACHE, DownloadCommand, DownloadedPackages, PackageDownloads
 from .packagejob import JobSpec
+from .packagematerial import MATERIAL_LIMIT, save_material
 from .packageplan import ALL_PACKAGES, PackagePlan, SUCCESS as PLAN_OK, package_rows
 from .packagepolicy import ARCHITECTURES, revision_scope
 from .packagereview import INSTALLED_NAMES, collect
@@ -23,7 +22,6 @@ from .tokenchange import real_token_change
 
 SUCCESS = "package-review-material-saved-no-upgrade"
 NO_CHANGE = "no-package-changes-no-upgrade"
-MATERIAL_LIMIT = 8 * 1024**2
 
 
 def selected_changes(report, prep):
@@ -106,38 +104,10 @@ class PackageInspection:
             self.prep.runner = original
 
     def _save(self, material, report):
-        with self.prep._lock():
-            self.prep._no_pending_change()
-            watched = Inventory(self.files)
-            before = self.plan._snapshot(watched)
-            material.verify(self.prep)
-            document = material.document.encode("ascii") + b"\n"
-            require(len(document) <= MATERIAL_LIMIT + 1)
-            directory = CACHE + "/" + self.job.job_id + "/review"
-            self._phase("private-material-write")
-            report["material_write_attempted"] = True
-            self.files.private_directory_new(directory)
-            self.material_path = directory + "/material.json"
-            self.files.write_new(self.material_path, document)
-            stamp = fingerprint(self.files, self.material_path, limit=MATERIAL_LIMIT + 1)
-            require(stamp[0][2] == len(document) and stamp[1] == hashlib.sha256(document).hexdigest()
-                    and self.files.read(self.material_path, mode=0o600, limit=MATERIAL_LIMIT + 1) == document)
-            self._phase("saved-material-recheck")
-            material.verify(self.prep)
-            require(self.plan._snapshot(watched) == before)
-            watched.recheck()
-            require(fingerprint(self.files, self.material_path, limit=MATERIAL_LIMIT + 1) == stamp)
-            receipt = (json.dumps({"format": 1, "operation": "package-review-material", "job_id": self.job.job_id,
-                                  "material_bytes": len(document), "material_sha256": stamp[1],
-                                  "changes": [asdict(c) for c in self.job.changes],
-                                  "security_audit_passed": False, "update_authorized": False,
-                                  "reusable_for_installation": False}, sort_keys=True) + "\n").encode("ascii")
-            with self.files.directory(directory, private=True):
-                self.files.write_new(directory + "/complete.json", receipt)
-                require(self.files.read(directory + "/complete.json", mode=0o600) == receipt)
-                require(fingerprint(self.files, self.material_path, limit=MATERIAL_LIMIT + 1) == stamp)
-            report.update(result=SUCCESS, material_saved_verified=True, review_receipt_saved=True,
-                          material_summary=material.summary())
+        require(material.batch.job == self.job)
+        saved = save_material(self.prep, self.plan, material, report, self._phase)
+        self.material_path = saved.path
+        report["result"] = SUCCESS
 
     def inspect(self, *, consent=False, decision):
         require(consent is True and callable(decision))

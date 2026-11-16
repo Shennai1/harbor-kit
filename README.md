@@ -18,7 +18,8 @@ Nginx，完成自有域名 HTTPS 环境的部署与 SSH 中文菜单管理。
 独立诊断出现 TXT 写入认证失败，用户确认候选原为 DNS 读取权限；修正后可用 `--after-permission-fix` 单次复测，仍不提交更换。
 权限修正后的候选复测及 `resume-token --experimental` 受限接续已实机通过，正式路径演练、续期恢复及节点使用正常。
 新增 `change-domain --experimental`，参数化更换域名、独立凭据和证书；跨区域更换正常流程及正常重启已取得用户实测反馈。
-实际组件升级尚无公开执行入口，通用系统变更恢复未实现；受管卸载及受控重装正常路径已有用户实测反馈。
+Debian 包实际更新已有独立实验入口但未实机升级验收，协议程序升级及通用系统变更恢复未实现；
+受管卸载及受控重装正常路径已有用户实测反馈。
 
 手工部署基线已由用户在 Debian 13 / amd64 上验证：Snell 5.0.1 + ShadowTLS 0.2.25
 （协议 v3）+ 本机 Nginx + Certbot DNS-01，IPv4 节点可用性、实际使用、
@@ -50,15 +51,15 @@ Nginx，完成自有域名 HTTPS 环境的部署与 SSH 中文菜单管理。
 新增独立的 `maintenance-plan` 交互入口，读取完整受管 main 的组件版本、本地归属记录、专用源模板及服务状态。
 不联网、不查询最新版本、不读取 CF Token 或证书材料、不升级或重启，不安装快捷指令。
 读取节点配置作内存核验，但不输出密钥；发现差异只报告待核查，不修复。
-当前仍无组件升级执行入口，盘点通过不代表版本最新、安全或可以升级。
+盘点通过不代表版本最新、安全或可以升级；实际包更新使用另一独立的实验入口。
 范围、结果及限制见 [组件维护只读盘点](docs/component-maintenance.md)；
 完整受管 Debian 13 / amd64 重装后的一次正常盘点已取得用户通过反馈，不代表升级或其他平台验收。
 
 版本元数据已集中管理，并新增 `artifacts compare` 离线比较，显式区分同版本、未审核版本、
 降级和 Snell 协议大版本迁移；不会据网页的 latest 或输入版本自动下载/安装。
-当前仍无可供用户执行的组件升级入口，见 [组件更新边界](docs/component-updates.md)。
+Snell/ShadowTLS 仍无升级执行入口，见 [组件更新边界](docs/component-updates.md)。
 内部已串联下载、包内容审查材料、分阶段确认、单次后台安装及验收恢复，
-但尚未接入用户命令或完成 Debian 实机升级验收，见 [内部更新基础与限制](docs/package-update-execution.md)。
+已接入独立实验命令，但尚未完成 Debian 实机升级验收，见 [内部更新基础与限制](docs/package-update-execution.md)。
 
 另有独立的实验入口 `package-update-plan --experimental`：确认后联网下载官方索引、
 写入独立检查缓存并模拟四个 Debian 组件及依赖变化，不安装、不升级、不启停服务。
@@ -67,8 +68,15 @@ Nginx，完成自有域名 HTTPS 环境的部署与 SSH 中文菜单管理。
 
 新增独立的 `package-update-review --experimental`：从本次新检查选择有限修订更新，
 分别确认下载和 root-only 审查材料保存；无更新就结束，不安装、不停止服务。
-没有实际升级或自动批准入口，不接入菜单，尚待 Debian 实测；
+该命令没有实际升级或自动批准能力，不接入菜单；无变化分支已获用户实测反馈，有更新分支仍待验收。
 见 [包内容审查及失败核查](docs/package-review.md)。完整材料可能涉及本地敏感脚本，不应直接分享。
+
+新增 `package-update --experimental`，将本轮检查、下载、私有材料独立审查和分段维护确认串联，
+具有实际停机/安装能力；`package-update-status --json` 只读查询原任务，不重试或恢复。
+`package-update-resume --experimental` 仅在同次开机、原安装明确成功且从未尝试恢复时，
+经重新核查及分项确认恢复服务与续期，不重装、不续跑部分恢复；见[受限恢复](docs/package-update-resume.md)。
+本轮仅完成本地开发，未实机升级验收，不安装快捷指令或接入菜单；
+范围和中断处理见 [实际包更新入口](docs/package-update.md)。
 
 ## 获取源码
 

@@ -1,4 +1,4 @@
-"""Chinese confirmations for the internal staged interface, not a live CLI."""
+"""Chinese staged confirmations, shared with the opt-in operator adapter."""
 
 from .hostprep import PreparationError
 from .installer import confirm

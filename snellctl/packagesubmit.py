@@ -16,7 +16,7 @@ from .hostprep import Command, PreparationError, Reply, STATE
 from .packagedownload import CACHE, DownloadCommand, DownloadedPackages, InstallSimulationCommand
 from .packageguards import GuardLease, INTENT
 from .packagejob import JobObserver, JobSpec
-from .packagepolicy import revision_scope
+from .packagepolicy import RevisionChange, revision_scope
 from .preflight import DEPENDENCIES
 
 
@@ -37,6 +37,19 @@ def update_intent(job):
 def snapshot(files, path, mode):
     data = files.read(path, mode=mode)
     return {"identity": files.identity(path), "sha256": hashlib.sha256(data).hexdigest()}
+
+
+def read_active_job(files):
+    """Caller holds the preparation lock; no caller-supplied task selection."""
+    path = STATE + "/" + INTENT + ".json"
+    before = snapshot(files, path, 0o600)
+    data = files.read(path, mode=0o600)
+    value = json.loads(data)
+    require(type(value) is dict and type(value.get("changes")) is list and 1 <= len(value["changes"]) <= 8)
+    job = JobSpec(value["job_id"], tuple(RevisionChange(**c) for c in value["changes"]))
+    # Canonical bytes reject duplicate keys, altered authority and booleans as integers.
+    require(data == encoded(update_intent(job)) and snapshot(files, path, 0o600) == before)
+    return job, before
 
 
 def expected_files(job):
@@ -90,7 +103,8 @@ def submit(lease, batch, *, consent=False, review_confirmed=False):
     """Submit at most once from an active guard lease; never finalize an upgrade.
 
     review_confirmed is an explicit caller assertion of separate module/script
-    review, not an automatic audit. No operator interface currently provides it.
+    review, not an automatic audit. The staged coordinator requires that review
+    and independently rechecks its inputs before reaching this internal API.
     """
     require(type(lease) is GuardLease and type(batch) is DownloadedPackages
             and lease.active and lease.job == batch.job and consent is True and review_confirmed is True)
@@ -161,6 +175,8 @@ def submit(lease, batch, *, consent=False, review_confirmed=False):
         try:
             report["report_saved"] = True
             files.write_new(job.directory + "/submission-result.json", encoded(report))
+        except (KeyboardInterrupt, EOFError):
+            report.update(report_saved=False, result="interrupted-inspect-only")
         except (OSError, PreparationError):
             report["report_saved"] = False
     return report
@@ -195,8 +211,9 @@ def _claim(files, job):
     raw = files.read(path, mode=0o600, limit=4096)
     value = json.loads(raw)
     require(isinstance(value, dict) and set(value) == {"format", "job_id", "invocation"}
-            and value["format"] == 1 and value["job_id"] == job.job_id
+            and type(value["format"]) is int and value["format"] == 1 and value["job_id"] == job.job_id
             and isinstance(value["invocation"], str) and re.fullmatch(r"[0-9a-f]{32}", value["invocation"]))
+    require(raw == encoded(value))
     return value, snapshot(files, path, 0o600)
 
 

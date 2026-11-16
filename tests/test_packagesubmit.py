@@ -273,6 +273,45 @@ class SubmissionTests(unittest.TestCase):
         self.assertEqual(before, self.fixture.fixture.snapshot())
         self.assertTrue(all(c.argv[:3] == ('systemctl', 'show', '--all') for c in self.host.calls))
 
+    def test_noncanonical_execution_claim_is_not_evidence(self):
+        self.run_submit()
+        self.state = 'done'
+        path = self.host.path(self.job.directory + '/execution-claim.json')
+        original = path.read_bytes()
+        malformed = (
+            original.replace(b'"format": 1', b'"format": true'),
+            original.replace(b'"format": 1', b'"format": 1.0'),
+            original.replace(b'"format": 1', b'"format": 0, "format": 1'),
+            original.replace(b'"invocation":', b'"invocation": "invalid", "invocation":'),
+        )
+        for raw in malformed:
+            with self.subTest(raw=raw):
+                path.write_bytes(raw)
+                self.host.calls.clear()
+                report = observe_submission(self.prep, self.job)
+                self.assertEqual(report['result'], 'inspection-required')
+                self.assertFalse(report['execution_claim_matches'])
+                self.assertEqual(path.read_bytes(), raw)
+                self.assertEqual(self.host.calls, [])
+        path.write_bytes(original)
+        self.assertEqual(observe_submission(self.prep, self.job)['result'], 'command-exited-success')
+
+    def test_report_write_eof_preserves_acknowledged_submission(self):
+        real = self.files.write_new
+        def fail(path, *args, **kwargs):
+            if path.endswith('/submission-result.json'):
+                raise EOFError('PRIVATE')
+            return real(path, *args, **kwargs)
+        with patch.object(self.files, 'write_new', side_effect=fail):
+            report = self.run_submit()
+        self.assertEqual(report['result'], 'interrupted-inspect-only')
+        self.assertTrue(report['submission_attempted'])
+        self.assertTrue(report['submission_acknowledged'])
+        self.assertFalse(report['report_saved'])
+        self.assertEqual(observe_submission(self.prep, self.job)['result'], 'running-or-queued')
+        self.assertEqual(sum(c.argv == ('systemctl', 'start', '--no-block', self.job.unit)
+                             for c in self.host.calls), 1)
+
     def test_missing_execution_claim_never_proves_success(self):
         self.run_submit()
         self.host.path(self.job.directory + '/execution-claim.json').unlink()

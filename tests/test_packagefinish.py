@@ -369,6 +369,21 @@ class FinishTests(unittest.TestCase):
         self.assertFalse(report['intent_removed_verified'])
         self.assert_pending()
 
+    def test_result_write_eof_preserves_verified_completion(self):
+        original = self.files.write_new
+        def fail(path, *args, **kwargs):
+            if path.endswith('/postinstall-result.json'):
+                raise EOFError('PRIVATE')
+            return original(path, *args, **kwargs)
+        with patch.object(self.files, 'write_new', side_effect=fail):
+            report = self.run_finish()
+        self.assertEqual(report['result'], 'interrupted-inspection-required')
+        self.assertFalse(report['report_saved'])
+        self.assertTrue(report['completion_recorded'])
+        self.assertTrue(report['intent_removed_verified'])
+        self.assertTrue(report['renewal_restored_verified'])
+        self.assertFalse(self.prep._exists(INTENT))
+
     def test_repeated_finish_and_escaped_lease_are_not_recovery(self):
         def mutate():
             first = self.finish.finish(confirm_restore=True, confirm_dns_test=True, confirm_renewal=True)

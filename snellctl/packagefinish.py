@@ -290,6 +290,8 @@ class PackageFinish:
             try:
                 report["report_saved"] = True
                 self._write("postinstall-result", report)
+            except (KeyboardInterrupt, EOFError):
+                report.update(report_saved=False, result="interrupted-inspection-required")
             except (OSError, PreparationError):
                 report["report_saved"] = False
         return report
