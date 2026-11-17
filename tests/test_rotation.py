@@ -516,10 +516,11 @@ class RotationCliTests(unittest.TestCase):
         run.assert_not_called()
         self.assertNotIn("8. 单独", output.getvalue())
 
-    def test_experimental_menu_dispatch_and_interruption_warning(self):
-        with patch("builtins.input", side_effect=["8", EOFError()]), redirect_stdout(io.StringIO()) as output, \
+    def test_experimental_menu_dispatch_and_failure_warning(self):
+        with patch("builtins.input", side_effect=["8", EOFError()]) as read, redirect_stdout(io.StringIO()) as output, \
                 patch("snellctl.rotation.run_rotation", return_value=1) as run:
-            self.assertEqual(run_menu(experimental=True), 130)
+            self.assertEqual(run_menu(experimental=True), 1)
+        self.assertEqual(read.call_count, 1)
         run.assert_called_once_with()
         self.assertIn("可能已改变系统", output.getvalue())
 

@@ -11,7 +11,7 @@ import sys
 
 
 PUBLIC_FILES = (
-    ".gitignore", "README.md",
+    ".gitignore", "README.md", "docs/ssh-menu.md",
     "docs/cleanup-inventory.md", "docs/client-export.md", "docs/design.md", "docs/domain-change.md", "docs/domain-inventory.md",
     "docs/downloads-and-preflight.md", "docs/host-preparation.md", "docs/install-wizard.md",
     "docs/key-rotation.md", "docs/local-activation.md", "docs/new-host-acceptance.md", "docs/port-change.md", "docs/public-enablement.md",
@@ -48,6 +48,7 @@ PUBLIC_FILES = (
     "snellctl/packagematerial.py", "snellctl/packageupdate.py", "snellctl/packagestatus.py",
     "tests/test_packageupdate.py", "tests/test_packagestatus.py", "docs/package-update.md",
     "snellctl/packageresume.py", "tests/test_packageresume.py", "docs/package-update-resume.md",
+    "snellctl/commandinstall.py", "snellctl/entrypoint.py", "tests/test_commandinstall.py", "docs/command-install.md",
 )
 SENSITIVE = (
     re.compile(r"-----BEGIN (?:RSA |EC |OPENSSH |ENCRYPTED )?PRIVATE KEY-----"),

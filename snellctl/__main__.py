@@ -33,7 +33,11 @@ def main(argv: list[str] | None = None) -> int:
     doctor = commands.add_parser("doctor", help="只读检查当前机器，不修改配置")
     doctor.add_argument("--json", action="store_true", help="输出脱敏 JSON，不自动保存文件")
     menu = commands.add_parser("menu", help="SSH 中文交互菜单，默认只读")
-    menu.add_argument("--experimental", action="store_true", help="显示安装、接续、密钥、端口及 Token 更换入口，仍需逐步确认")
+    menu.add_argument("--experimental", action="store_true", help="显示节点变更、联网维护、实验升级及卸载重装入口；仍需各项独立确认")
+    entry_install = commands.add_parser("install-command", help="实验版永久快捷命令首次安装；不改节点，不覆盖已有入口")
+    entry_install.add_argument("--experimental", action="store_true", help="明确开启本机代码复制，仍需交互确认")
+    entry_status = commands.add_parser("command-status", help="只读核查永久管理代码及入口；不检查节点健康")
+    entry_status.add_argument("--json", action="store_true", help="输出结构化报告（默认也输出 JSON）")
     install = commands.add_parser("install", help="实验版新机安装向导，会修改系统；仅限交互终端")
     install.add_argument("--experimental", action="store_true", help="明确开启未实机验收的安装向导")
     resume = commands.add_parser("resume", help="实验版受限接续；只允许本机验收完成且公网尚未开始的阶段")
@@ -115,6 +119,15 @@ def main(argv: list[str] | None = None) -> int:
         elif action == "recover":
             command.add_argument("--action", required=True, choices=("resume", "rollback"))
     args = parser.parse_args(argv)
+    if args.command == "install-command":
+        if not args.experimental:
+            print("快捷命令安装需要 --experimental 和交互确认；不会覆盖已有目标。", file=sys.stderr)
+            return 2
+        from .commandinstall import run_command_install
+        return run_command_install()
+    if args.command == "command-status":
+        from .commandinstall import run_command_status
+        return run_command_status(json_output=args.json)
     if args.command == "uninstall":
         if not args.experimental:
             print("卸载需要 --experimental，仍须核查、备用连接及不可撤销删除确认。", file=sys.stderr)

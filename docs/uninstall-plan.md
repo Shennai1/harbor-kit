@@ -31,7 +31,7 @@ python3 -m snellctl uninstall-plan
 ```
 
 仅有一次“只核查、全部保留”的 `[y/n]` 确认，默认取消。
-没有 `--apply`、`--yes`、`--experimental`、`--root`、域名或 Token 参数；不加入菜单编号。
+没有 `--apply`、`--yes`、`--experimental`、`--root`、域名或 Token 参数；也可从菜单 16 的只读核查入口调用。
 不停止节点、不暂停续期、不修改 UFW、不执行 Certbot、不下载或删除文件。
 不访问 Cloudflare 或 CA；会执行本机 TLS 检查，可能产生常规服务日志。
 会读取现用受管秘密作内存核验，原始内容、指纹、域名和完整路径不会进入报告。

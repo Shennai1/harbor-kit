@@ -407,9 +407,10 @@ class InstallCliTests(unittest.TestCase):
         self.assertNotIn("3. 实验版", output.getvalue())
 
     def test_opt_in_menu_never_claims_no_changes_after_install_attempt(self):
-        with patch("builtins.input", side_effect=["3", EOFError]), redirect_stdout(io.StringIO()) as output, \
+        with patch("builtins.input", side_effect=["3", EOFError]) as read, redirect_stdout(io.StringIO()) as output, \
              patch("snellctl.installer.run_wizard", return_value=1) as wizard:
-            self.assertEqual(run_menu(experimental=True), 130)
+            self.assertEqual(run_menu(experimental=True), 1)
+        self.assertEqual(read.call_count, 1)
         wizard.assert_called_once_with()
         self.assertNotIn("未执行部署或配置变更", output.getvalue())
         self.assertIn("可能已改变系统", output.getvalue())

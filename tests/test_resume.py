@@ -358,9 +358,10 @@ class ResumeCliTests(unittest.TestCase):
         self.assertNotIn("7. 中断", output.getvalue())
 
     def test_menu_dispatch_preserves_possible_changes_warning(self):
-        with patch("builtins.input", side_effect=["7", EOFError()]), redirect_stdout(io.StringIO()) as output, \
+        with patch("builtins.input", side_effect=["7", EOFError()]) as read, redirect_stdout(io.StringIO()) as output, \
                 patch("snellctl.installer.run_resume", return_value=1) as resume:
-            self.assertEqual(run_menu(experimental=True), 130)
+            self.assertEqual(run_menu(experimental=True), 1)
+        self.assertEqual(read.call_count, 1)
         resume.assert_called_once_with()
         self.assertIn("7. 中断", output.getvalue())
         self.assertIn("可能已改变系统", output.getvalue())
