@@ -38,6 +38,12 @@ def main(argv: list[str] | None = None) -> int:
     entry_install.add_argument("--experimental", action="store_true", help="明确开启本机代码复制，仍需交互确认")
     entry_status = commands.add_parser("command-status", help="只读核查永久管理代码及入口；不检查节点健康")
     entry_status.add_argument("--json", action="store_true", help="输出结构化报告（默认也输出 JSON）")
+    for name, help_text in (
+        ("update-command", "从独立核验的外部源码更新管理代码；不更新节点软件"),
+        ("remove-command", "从外部源码移除管理代码和快捷入口；保留节点和全部节点资源"),
+    ):
+        management = commands.add_parser(name, help=help_text)
+        management.add_argument("--experimental", action="store_true", help="开启未实机验收的管理代码维护，仍需独立确认")
     install = commands.add_parser("install", help="实验版新机安装向导，会修改系统；仅限交互终端")
     install.add_argument("--experimental", action="store_true", help="明确开启未实机验收的安装向导")
     resume = commands.add_parser("resume", help="实验版受限接续；只允许本机验收完成且公网尚未开始的阶段")
@@ -119,6 +125,12 @@ def main(argv: list[str] | None = None) -> int:
         elif action == "recover":
             command.add_argument("--action", required=True, choices=("resume", "rollback"))
     args = parser.parse_args(argv)
+    if args.command in ("update-command", "remove-command"):
+        if not args.experimental:
+            print("管理代码维护需要 --experimental、外部核验源码及交互确认。", file=sys.stderr)
+            return 2
+        from .commandmanage import run_command_management
+        return run_command_management("update" if args.command == "update-command" else "remove")
     if args.command == "install-command":
         if not args.experimental:
             print("快捷命令安装需要 --experimental 和交互确认；不会覆盖已有目标。", file=sys.stderr)

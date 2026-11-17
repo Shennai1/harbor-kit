@@ -1,6 +1,7 @@
 """Standalone, standard-library-only verification before importing installed code."""
 
 from contextlib import contextmanager
+import fcntl
 import hashlib
 import json
 import os
@@ -13,8 +14,14 @@ import sys
 
 BASE = "/usr/local/lib/harbor-kit"
 COMMAND = "/usr/local/bin/snellctl"
+INTENT = BASE + ".intent.json"
+STAGE = BASE + ".new"
+BACKUP = BASE + ".previous"
+PENDING_PATHS = (INTENT, STAGE, BACKUP, COMMAND + ".snellctl-new")
 WRAPPER = ("#!/bin/sh\nexec /usr/bin/python3 -I -B " + BASE + '/launcher.py "$@"\n').encode()
-MODULES = (
+# Reviewed 2409683 runtime baseline, not an archive hash or author signature.
+LEGACY_SNAPSHOT = "a96721d1e3647c062f07d5b94085a36ae944ee0eb53cffb350c7e91823098a5a"
+LEGACY_MODULES = (
     "__init__.py", "__main__.py", "activation.py", "aptreview.py", "artifacts.py",
     "cleanup.py", "client.py", "commandinstall.py", "deployment.py", "doctor.py",
     "domainchange.py", "domaininventory.py", "entrypoint.py", "hostcommands.py", "hostprep.py",
@@ -28,6 +35,7 @@ MODULES = (
     "sandbox_cli.py", "storage.py", "tlsprobe.py", "tokenchange.py", "tokendiag.py", "tokenresume.py",
     "uninstall.py", "uninstallplan.py",
 )
+MODULES = LEGACY_MODULES + ("commandmanage.py",)
 FILE_LIMIT = 256 * 1024
 TOTAL_LIMIT = 2 * 1024 * 1024
 
@@ -118,16 +126,31 @@ def _unique(pairs):
     return result
 
 
-def verify_installation(root=Path("/"), *, uid=0):
+@contextmanager
+def management_lock(root=Path("/"), *, uid=0, exclusive=False):
+    # Lock the stable parent inode, not the code directory that updates rename.
+    tree = Tree(root, uid)
+    try:
+        with tree.directory("/usr/local/lib") as fd:
+            fcntl.flock(fd, (fcntl.LOCK_EX if exclusive else fcntl.LOCK_SH) | fcntl.LOCK_NB)
+            try:
+                yield
+            finally:
+                fcntl.flock(fd, fcntl.LOCK_UN)
+    finally:
+        tree.close()
+
+
+def verify_installation(root=Path("/"), *, uid=0, modules=MODULES):
     tree = Tree(root, uid)
     try:
         if tree.names(BASE) != {"manifest.json", "launcher.py", "snellctl"}:
             raise EntryError("unexpected installation layout")
-        if tree.names(BASE + "/snellctl") != set(MODULES):
+        if tree.names(BASE + "/snellctl") != set(modules):
             raise EntryError("unexpected module layout")
         raw = tree.read(BASE + "/manifest.json", mode=0o600, limit=32768)
         record = json.loads(raw, object_pairs_hook=_unique)
-        paths = {"snellctl/" + name for name in MODULES} | {"launcher.py", "command"}
+        paths = {"snellctl/" + name for name in modules} | {"launcher.py", "command"}
         if (not isinstance(record, dict) or set(record) != {"format", "kind", "files", "snapshot_sha256"}
                 or type(record["format"]) is not int or record["format"] != 1
                 or record["kind"] != "harbor-kit-command" or not isinstance(record["files"], dict)
@@ -155,13 +178,33 @@ def verify_installation(root=Path("/"), *, uid=0):
         tree.close()
 
 
-def launch(root=Path("/"), *, uid=0):
+def verify_supported_installation(root=Path("/"), *, uid=0):
+    tree = Tree(root, uid)
+    try:
+        names = tree.names(BASE + "/snellctl")
+    finally:
+        tree.close()
+    modules = MODULES if names == set(MODULES) else LEGACY_MODULES
+    value = verify_installation(root, uid=uid, modules=modules)
+    if modules == LEGACY_MODULES and value != LEGACY_SNAPSHOT:
+        raise EntryError("unsupported legacy snapshot")
+    return value
+
+
+def _launch(root, uid):
     # Production always uses the fixed root; no environment or CLI path override.
     try:
         if os.geteuid() != uid or sys.version_info < (3, 11):
             raise EntryError("root and Python 3.11 required")
         if any(name == "snellctl" or name.startswith("snellctl.") for name in sys.modules):
             raise EntryError("package already imported")
+        tree = Tree(root, uid)
+        try:
+            for path in PENDING_PATHS:
+                if Path(path).name in tree.names(str(Path(path).parent)):
+                    raise EntryError("management change pending")
+        finally:
+            tree.close()
         verify_installation(root, uid=uid)
     except (EOFError, KeyboardInterrupt):
         print("启动校验已中断；未调用管理菜单。", file=sys.stderr)
@@ -180,6 +223,18 @@ def launch(root=Path("/"), *, uid=0):
         print("管理命令异常退出；可能已有操作，请保留现场。原始异常未显示。", file=sys.stderr)
         return 1
     return 0
+
+
+def launch(root=Path("/"), *, uid=0):
+    try:
+        with management_lock(root, uid=uid):
+            return _launch(root, uid)
+    except (EOFError, KeyboardInterrupt):
+        print("快捷入口已中断；未继续执行。", file=sys.stderr)
+        return 130
+    except Exception:
+        print("管理代码正在维护或目录核查失败；未调用菜单。", file=sys.stderr)
+        return 1
 
 
 if __name__ == "__main__":

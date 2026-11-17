@@ -8,7 +8,7 @@ import platform
 import shutil
 import sys
 
-from .entrypoint import BASE, COMMAND, MODULES, TOTAL_LIMIT, WRAPPER, Tree, digest, snapshot, verify_installation
+from .entrypoint import BASE, COMMAND, MODULES, PENDING_PATHS, TOTAL_LIMIT, WRAPPER, Tree, digest, snapshot, verify_installation, verify_supported_installation
 from .hostprep import HostFiles, PreparationError
 from .installer import Terminal, confirm
 
@@ -42,6 +42,8 @@ class CommandInstallation:
 
     def plan(self):
         self.conflict_check()
+        if any(self.files.info(path) is not None for path in PENDING_PATHS):
+            raise PreparationError("存在管理代码维护现场，不重装或覆盖。")
         if self.files.info(BASE) is not None or self.files.info(COMMAND) is not None:
             raise PreparationError("命令或安装目录已存在，不覆盖或接管。")
         for path in ("/usr/local/lib", "/usr/local/bin"):
@@ -143,10 +145,12 @@ def run_command_install(*, factory=real_command_installation, terminal=None):
 def command_status(root=Path("/"), *, uid=0):
     files = HostFiles(root)
     try:
+        if any(files.info(path) is not None for path in PENDING_PATHS):
+            raise PreparationError("管理代码维护尚待核查。")
         if files.info(BASE) is None and files.info(COMMAND) is None:
             return {"format": 1, "operation": "command-status", "result": "not-installed",
                     "host_changes_attempted": False, "node_health": "not-checked"}
-        value = verify_installation(root, uid=uid)
+        value = verify_supported_installation(root, uid=uid)
         return {"format": 1, "operation": "command-status", "result": "installed-code-verified",
                 "host_changes_attempted": False, "snapshot_sha256": value, "node_health": "not-checked"}
     finally:
