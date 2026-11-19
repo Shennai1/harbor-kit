@@ -11,6 +11,7 @@ import sys
 
 
 PUBLIC_FILES = (
+    ".github/workflows/check.yml", "tools/check.py", "tests/test_checks.py", "docs/developer-checks.md",
     ".gitignore", "README.md", "docs/ssh-menu.md",
     "docs/cleanup-inventory.md", "docs/client-export.md", "docs/design.md", "docs/domain-change.md", "docs/domain-inventory.md",
     "docs/downloads-and-preflight.md", "docs/host-preparation.md", "docs/install-wizard.md",

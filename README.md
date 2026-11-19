@@ -103,6 +103,9 @@ python3 -m snellctl preflight --domain node.example.net
 python3 -m unittest discover -s tests -v
 ```
 
+独立开发环境的统一源码和完整回归检查使用 `python3 -E -s -B -m tools.check`，
+不是 VPS 操作命令。自动检查草案、环境要求及交付边界见[开发检查](docs/developer-checks.md)。
+
 `doctor` 不需要联网，不请求 sudo，不安装软件、不修改防火墙、不重启服务。
 默认只向终端输出；`--json` 也不会自动保存文件。
 无权限读取某项状态时标记为“未知”，不会据此判断安全。
