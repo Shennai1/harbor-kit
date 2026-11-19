@@ -292,10 +292,15 @@ class TokenChangeTests(unittest.TestCase):
     def test_stale_credential_identity_rejected(self):
         plan = self.tokens.check()
         path = self.host.path(CREDENTIAL)
-        path.unlink()
-        self.host.write(CREDENTIAL, self.old)
-        with self.assertRaises(PreparationError):
-            self.tokens.change(plan, NEW_TOKEN, confirm_change=True)
+        identity = self.tokens.files.identity(CREDENTIAL)
+        # Keep the old inode alive so recreation cannot reuse its identity.
+        with path.open("rb") as original:
+            path.unlink()
+            self.host.write(CREDENTIAL, self.old)
+            self.assertEqual(original.read(), path.read_bytes())
+            self.assertNotEqual(identity, self.tokens.files.identity(CREDENTIAL))
+            with self.assertRaises(PreparationError):
+                self.tokens.change(plan, NEW_TOKEN, confirm_change=True)
         self.assertEqual(self.mutations(), [])
 
     def test_credential_drift_after_completed_change_rejected(self):

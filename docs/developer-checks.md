@@ -22,21 +22,29 @@ python3 -E -s -B -m tools.check
 测试输出在 stderr，最后汇总 JSON 在 stdout；不自动保存或上传日志。
 测试成功不证明真实系统安装、断线恢复、长期运行或安全审计通过。
 
-## GitHub 自动检查草案
+## GitHub 自动检查
 
-本地新增 .github/workflows/check.yml，尚未获本批发布批准或云端运行验收。
-拟在 main 推送、普通 pull_request 和手动触发时执行，使用 GitHub 托管 Ubuntu 24.04，
+.github/workflows/check.yml 已经获批发布；首次云端运行发现两项文件替换测试失败，尚未通过云端验收。
+在 main 推送、普通 pull_request 和手动触发时执行，使用 GitHub 托管 Ubuntu 24.04，
 分别测试 Python 3.11 和 3.13；不是 Debian 12/13 部署支持矩阵，不扩展已验收平台范围。
 不使用 self-hosted、pull_request_target、sudo、项目秘密或 SSH；只有 contents: read 权限。
 检出代码不保留凭据，官方 checkout/setup-python 固定完整提交，而不是浮动版本标签。
 每任务最多 20 分钟，同一分支新的检查取消旧检查；不会取消 VPS 或用户本机任务。
 云端准备 runner/Python 会联网；回归入口本身不查询上游、Cloudflare 或 CA。
-没有自动发布、Release、附件上传或部署步骤。后续上传本批文件需要独立批准。
+没有自动发布、Release、附件上传或部署步骤。后续修复发布仍需独立批准。
 
 固定 Actions 版本核对及最小权限依据：
 [GitHub 安全指南](https://docs.github.com/en/actions/reference/security/secure-use)、
 [checkout](https://github.com/actions/checkout)、[setup-python](https://github.com/actions/setup-python)。
 完整提交锁定不能替代内容审查；托管镜像和 Python 小版本仍可能更新。
+
+## 文件替换测试边界
+
+同内容替换测试必须先保证设备号/inode 确实改变，不能假定删除后重建必然取得新编号。
+测试保留旧文件的打开句柄，重建后断言内容相同、身份不同，再验证操作被拒绝且没有变更命令。
+打开句柄会保留已解除目录链接的文件，直到句柄关闭，参见 [Linux unlink 手册](https://man7.org/linux/man-pages/man2/unlink.2.html)。
+运行代码的设备号/inode 与内容摘要核对不是完整变更历史：旧编号回收后，若编号、内容及其他受检属性均一致，
+不能据此证明文件从未被删除重建，也不能防御并发恶意 root 操作；本批测试修正不改变这一边界。
 
 ## 交付关卡
 

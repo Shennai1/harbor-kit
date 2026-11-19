@@ -259,10 +259,15 @@ class FlowTests(unittest.TestCase):
         self.host.write(path, saved + b' ', 0o600)
         self.assert_blocked_resume()
         self.host.write(path, saved, 0o600)
-        self.host.path(path).unlink()
-        self.assert_blocked_resume()
-        self.host.write(path, saved, 0o600)
-        self.assert_blocked_resume()
+        identity = self.files.identity(path)
+        # Keep the old inode alive so recreation cannot reuse its identity.
+        with self.host.path(path).open('rb') as original:
+            self.host.path(path).unlink()
+            self.assert_blocked_resume()
+            self.host.write(path, saved, 0o600)
+            self.assertEqual(original.read(), self.files.read(path))
+            self.assertNotEqual(identity, self.files.identity(path))
+            self.assert_blocked_resume()
 
     def test_other_pending_operations_block_continuation(self):
         self.prepare()
