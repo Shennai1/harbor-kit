@@ -11,6 +11,7 @@ import sys
 
 
 PUBLIC_FILES = (
+    "tools/source_bundle.py", "tests/test_source_bundle.py", "docs/source-bundle.md",
     ".github/workflows/check.yml", "tools/check.py", "tests/test_checks.py", "docs/developer-checks.md",
     ".gitignore", "README.md", "docs/ssh-menu.md",
     "docs/cleanup-inventory.md", "docs/client-export.md", "docs/design.md", "docs/domain-change.md", "docs/domain-inventory.md",

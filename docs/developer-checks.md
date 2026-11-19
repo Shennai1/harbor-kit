@@ -24,7 +24,9 @@ python3 -E -s -B -m tools.check
 
 ## GitHub 自动检查
 
-.github/workflows/check.yml 已经获批发布；首次云端运行发现两项文件替换测试失败，尚未通过云端验收。
+.github/workflows/check.yml 已经获批发布；首次云端运行发现两项文件替换测试失败。
+修正测试构造后，[固定提交 99aabcb 的云端运行](https://github.com/Shennai1/harbor-kit/actions/runs/44496609800)
+在 Python 3.11.18 和 3.13.18 上各完成 1657 项，零失败、错误或跳过；这不是后续任意提交的验收证明。
 在 main 推送、普通 pull_request 和手动触发时执行，使用 GitHub 托管 Ubuntu 24.04，
 分别测试 Python 3.11 和 3.13；不是 Debian 12/13 部署支持矩阵，不扩展已验收平台范围。
 不使用 self-hosted、pull_request_target、sudo、项目秘密或 SSH；只有 contents: read 权限。
@@ -51,3 +53,4 @@ python3 -E -s -B -m tools.check
 本地全集通过后再请求发布批准。发布时仍需逐文件核对允许范围、固定提交和下载归档摘要，
 并用实际下载的源码复跑检查。CI 通过不自动授权修改 VPS，也不自动产生正式发行版。
 不把私人笔记、work、运行配置、密钥或诊断日志纳入公开文件。
+本地[源码交付包](source-bundle.md)沿用同一白名单；打包不会运行测试或自动取得发布授权。
