@@ -106,6 +106,8 @@ python3 -m unittest discover -s tests -v
 独立开发环境的统一源码和完整回归检查使用 `python3 -E -s -B -m tools.check`，
 不是 VPS 操作命令。已运行的自动检查、环境要求及交付边界见[开发检查](docs/developer-checks.md)。
 开发侧可离线生成仅含公开文件的源码包及校验清单，见[源码打包](docs/source-bundle.md)；不自动发布或安装。
+从已有可信代码可用完整提交及预先核对的归档/快照摘要下载并暂存源码，
+见[固定提交源码获取](docs/source-fetch.md)；不执行下载内容或安装节点。
 
 `doctor` 不需要联网，不请求 sudo，不安装软件、不修改防火墙、不重启服务。
 默认只向终端输出；`--json` 也不会自动保存文件。

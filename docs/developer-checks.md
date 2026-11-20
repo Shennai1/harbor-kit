@@ -27,6 +27,9 @@ python3 -E -s -B -m tools.check
 .github/workflows/check.yml 已经获批发布；首次云端运行发现两项文件替换测试失败。
 修正测试构造后，[固定提交 99aabcb 的云端运行](https://github.com/Shennai1/harbor-kit/actions/runs/44496609800)
 在 Python 3.11.18 和 3.13.18 上各完成 1657 项，零失败、错误或跳过；这不是后续任意提交的验收证明。
+[后续固定提交 07d42f1 的云端运行](https://github.com/Shennai1/harbor-kit/actions/runs/44590773500)
+在两种 Python 上各完成 1670 项，零失败、错误或跳过；该结果覆盖已经发布的源码打包工具，
+不覆盖本地新增的固定提交源码获取入口。后者须另行获批发布并在对应提交复测。
 在 main 推送、普通 pull_request 和手动触发时执行，使用 GitHub 托管 Ubuntu 24.04，
 分别测试 Python 3.11 和 3.13；不是 Debian 12/13 部署支持矩阵，不扩展已验收平台范围。
 不使用 self-hosted、pull_request_target、sudo、项目秘密或 SSH；只有 contents: read 权限。
