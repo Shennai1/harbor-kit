@@ -5,12 +5,13 @@ import io
 import json
 import os
 from pathlib import Path
+import subprocess
+import sys
 import tarfile
 import tempfile
 import unittest
 from unittest.mock import Mock, patch
 
-from snellctl import artifacts
 from tools import source_fetch as f
 
 
@@ -172,14 +173,14 @@ class SourceFetchTests(unittest.TestCase):
         cases[2].symlink_to(real)
         cases[3].symlink_to(self.base / "missing")
         for target in [*cases, cases[2] / "new", Path("relative"), self.base / ".." / "new"]:
-            with self.subTest(target=target), self.assertRaises((OSError, artifacts.ArtifactError)):
+            with self.subTest(target=target), self.assertRaises((OSError, f.FetchError)):
                 f.fetch(target, COMMIT, digest(self.data), snapshot(FILES), downloader=downloader)
         downloader.assert_not_called()
         self.assertEqual(cases[0].read_text(), "keep")
         self.assertEqual(list(real.iterdir()), [])
 
     def test_network_failure_and_interrupt_leave_no_completion(self):
-        for index, error in enumerate((artifacts.ArtifactError("network"), KeyboardInterrupt())):
+        for index, error in enumerate((f.FetchError("network"), KeyboardInterrupt())):
             target = self.base / str(index)
             with self.assertRaises(type(error)):
                 f.fetch(target, COMMIT, digest(self.data), snapshot(FILES), downloader=Mock(side_effect=error))
@@ -215,7 +216,7 @@ class SourceFetchTests(unittest.TestCase):
     def test_restrictive_umask_refuses_instead_of_claiming_completion(self):
         previous = os.umask(0o777)
         try:
-            with self.assertRaises((OSError, artifacts.ArtifactError)):
+            with self.assertRaises((OSError, f.FetchError)):
                 self.fetch()
         finally:
             os.umask(previous)
@@ -237,6 +238,30 @@ class SourceFetchTests(unittest.TestCase):
         with redirect_stderr(io.StringIO()), self.assertRaises(SystemExit) as error:
             f.main(["--output", str(self.output)])
         self.assertEqual(error.exception.code, 2)
+
+    def test_single_file_entrypoint_has_no_project_imports(self):
+        script = Path(f.__file__).resolve()
+        result = subprocess.run([sys.executable, "-I", "-B", str(script), "--help"],
+                                cwd=self.base, env={"PYTHONPATH": str(script.parents[1])},
+                                capture_output=True, text=True, timeout=10)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("--archive-sha256", result.stdout)
+        result = subprocess.run([sys.executable, "-I", "-B", str(script), "--commit", "main",
+                                 "--archive-sha256", digest(self.data),
+                                 "--snapshot-sha256", snapshot(FILES), "--output", str(self.output)],
+                                cwd=self.base, capture_output=True, text=True, timeout=10)
+        self.assertEqual(result.returncode, 1)
+        self.assertFalse(self.output.exists())
+
+    def test_download_rejects_non_https_before_open(self):
+        with patch.object(f.urllib.request, "build_opener") as opener, self.assertRaises(f.FetchError):
+            f.download(f.Archive("http://codeload.github.com/x", 10, ("codeload.github.com",)))
+        opener.assert_not_called()
+
+    def test_redirect_rejects_other_hosts(self):
+        redirect = f._Redirects(("codeload.github.com",))
+        with self.assertRaises(f.FetchError):
+            redirect.redirect_request(Mock(), None, 302, "Found", {}, "https://example.com/archive")
 
 
 if __name__ == "__main__":

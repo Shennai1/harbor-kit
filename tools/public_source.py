@@ -11,7 +11,7 @@ import sys
 
 
 PUBLIC_FILES = (
-    "tools/source_fetch.py", "tests/test_source_fetch.py", "docs/source-fetch.md",
+    "tools/source_fetch.py", "tests/test_source_fetch.py", "docs/source-fetch.md", "docs/quick-install.md",
     "tools/source_bundle.py", "tests/test_source_bundle.py", "docs/source-bundle.md",
     ".github/workflows/check.yml", "tools/check.py", "tests/test_checks.py", "docs/developer-checks.md",
     ".gitignore", "README.md", "docs/ssh-menu.md",
@@ -60,7 +60,7 @@ SENSITIVE = (
     re.compile(r"/Users/[A-Za-z0-9._-]+/"),
 )
 FILE_LIMIT = 256 * 1024
-TOTAL_LIMIT = 2 * 1024 * 1024
+TOTAL_LIMIT = 4 * 1024 * 1024
 
 
 class ExportError(Exception):
